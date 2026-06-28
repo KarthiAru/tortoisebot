@@ -50,9 +50,21 @@ sudo apt install \
   ros-humble-navigation2 \
   ros-humble-urdf \
   ros-humble-robot-localization \
+  ros-humble-ros2bag \
+  ros-humble-rosbag2-storage-mcap \
+  ros-humble-rosbag2-transport \
+  ros-humble-v4l2-camera \
+  ros-humble-image-transport-plugins \
   ros-humble-ros-gz-bridge \
   ros-humble-ros-gz-sim \
   ros-humble-ros-gz-interfaces
+```
+
+On TortoiseBot hardware, also install the Raspberry Pi Python sensor libraries used by the GPIO motor driver and BNO055 IMU node:
+
+```bash
+sudo apt install python3-pip python3-rpi.gpio i2c-tools v4l-utils
+pip3 install adafruit-blinka adafruit-circuitpython-bno055
 ```
 
 ---
@@ -97,6 +109,7 @@ source install/setup.bash
 |---|---|---|
 | **Main** | `autobringup.launch.py` | All-in-one bringup (sim + real, SLAM + nav) |
 | **Main** | `bringup.launch.py` | Simulation only (no nav stack) |
+| **Logging** | `hardware_record.launch.py` | Record hardware topics to MCAP for Foxglove |
 | **SLAM** | `cartographer.launch.py` | Cartographer SLAM node |
 | **Navigation** | `navigation_slam.launch.py` | Nav2 stack during SLAM |
 | **Navigation** | `navigation_mapbased.launch.py` | Nav2 with AMCL on a saved map |
@@ -228,7 +241,7 @@ ssh tortoisebot@<ROBOT_IP_ADDRESS>
 
 ```bash
 source /opt/ros/humble/setup.bash
-ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False
+ros2 launch tortoisebot_bringup autobringup.launch.py use_sim_time:=False exploration:=True
 ```
 
 <p align="center">
@@ -300,7 +313,7 @@ source /opt/ros/humble/setup.bash
 ros2 launch tortoisebot_bringup autobringup.launch.py \
   use_sim_time:=False \
   exploration:=False \
-  map:=~/maps/my_room_map.yaml
+  map_file:=~/maps/my_room_map.yaml
 ```
 
 **Step 3 — On your PC:** Visualize and send navigation goals:
@@ -317,6 +330,48 @@ Use the **Nav2 Goal** button in RViz2 to set a target pose and watch the robot n
 > ```bash
 > export ROS_DOMAIN_ID=0   # Set a unique integer per robot (0–101)
 > ```
+
+
+---
+
+### 4.6 MCAP Logging for Foxglove
+
+The hardware bringup can record robot data directly to MCAP, which Foxglove opens without conversion.
+
+Record while launching the real robot stack:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+ros2 launch tortoisebot_bringup autobringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True
+```
+
+Or record from a second SSH terminal after the robot is already running:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+ros2 launch tortoisebot_bringup hardware_record.launch.py
+```
+
+By default, bags are written under `~/tortoisebot_mcap/tortoisebot_hardware_<timestamp>` and include LiDAR, IMU, raw camera images, camera info, TF, velocity commands, motor PWM/direction debug topics, and `/odom` if an odometry source is publishing it.
+
+Useful launch arguments:
+
+```bash
+ros2 launch tortoisebot_bringup autobringup.launch.py \
+  use_sim_time:=False \
+  record_mcap:=True \
+  bag_dir:=/home/tortoisebot/logs \
+  camera_device:=/dev/video0
+```
+
+Open the generated `.mcap` file in Foxglove from your PC. Raw camera frames are recorded by default for visual analysis, so keep an eye on SD card free space during longer runs.
+
+> Note: this repository does not include a wheel encoder odometry driver. The MCAP recorder includes `/odom`, but that topic will only contain data if another odometry node is running.
 
 ---
 

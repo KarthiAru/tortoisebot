@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import os
+from datetime import datetime
+
 from launch import LaunchDescription
 from launch.actions import (
     SetEnvironmentVariable,
@@ -14,25 +16,37 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
+def real_robot_and_recording_enabled(use_sim_time, record_mcap):
+    return PythonExpression([
+        "'true' if '", use_sim_time, "'.lower() == 'false' and '",
+        record_mcap,
+        "'.lower() == 'true' else 'false'",
+    ])
+
+
 def generate_launch_description():
+    default_bag_name = datetime.now().strftime('tortoisebot_hardware_%Y%m%d_%H%M%S')
 
-    desc_pkg    = get_package_share_directory('tortoisebot_description')
-    gazebo_pkg  = get_package_share_directory('tortoisebot_gazebo')
-    slam_pkg    = get_package_share_directory('tortoisebot_slam')
-    nav_pkg     = get_package_share_directory('tortoisebot_navigation')
-    lidar_pkg   = get_package_share_directory('ydlidar_ros2_driver')
+    desc_pkg = get_package_share_directory('tortoisebot_description')
+    gazebo_pkg = get_package_share_directory('tortoisebot_gazebo')
+    slam_pkg = get_package_share_directory('tortoisebot_slam')
+    nav_pkg = get_package_share_directory('tortoisebot_navigation')
+    lidar_pkg = get_package_share_directory('ydlidar_ros2_driver')
+    bringup_pkg = get_package_share_directory('tortoisebot_bringup')
 
-    default_map     = os.path.join(nav_pkg,   'maps',   'explored_map.yaml')
-    sim_rviz_config = os.path.join(desc_pkg,  'rviz',   'simulation.rviz')
-    nav_rviz_config = os.path.join(desc_pkg,  'rviz',   'nav2.rviz')
-    lidar_params    = os.path.join(lidar_pkg,  'params', 'ydlidar.yaml')
-    real_urdf       = os.path.join(desc_pkg, 'models', 'urdf', 'tortoisebotreal.xacro')
+    default_map = os.path.join(nav_pkg, 'maps', 'explored_map.yaml')
+    sim_rviz_config = os.path.join(desc_pkg, 'rviz', 'simulation.rviz')
+    nav_rviz_config = os.path.join(desc_pkg, 'rviz', 'nav2.rviz')
+    lidar_params = os.path.join(lidar_pkg, 'params', 'ydlidar.yaml')
     ekf_slam_params = os.path.join(slam_pkg, 'config', 'ekf.yaml')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
-    exploration  = LaunchConfiguration('exploration')
-    map_file     = LaunchConfiguration('map_file')
-    camera_port  = LaunchConfiguration('camera_port')
+    exploration = LaunchConfiguration('exploration')
+    map_file = LaunchConfiguration('map_file')
+    camera_device = LaunchConfiguration('camera_device')
+    record_mcap = LaunchConfiguration('record_mcap')
+    bag_dir = LaunchConfiguration('bag_dir')
+    bag_name = LaunchConfiguration('bag_name')
 
     world_file = os.path.join(gazebo_pkg, 'worlds', 'nav2_test_world.sdf')
 
@@ -40,57 +54,66 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(gazebo_pkg, 'launch', 'ignition_sim.launch.py')),
         launch_arguments={
-            'world':   world_file,
+            'world': world_file,
             'spawn_x': '0.0',
             'spawn_y': '0.0',
         }.items(),
-        condition=IfCondition(use_sim_time)
+        condition=IfCondition(use_sim_time),
     )
 
     state_publisher = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(desc_pkg, 'launch', 'state_publisher.launch.py')),
         launch_arguments={'use_sim_time': 'False'}.items(),
-        condition=UnlessCondition(use_sim_time)
+        condition=UnlessCondition(use_sim_time),
     )
 
     lidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(lidar_pkg, 'launch', 'ydlidar_launch.py')),
         launch_arguments={'params_file': lidar_params}.items(),
-        condition=UnlessCondition(use_sim_time)
+        condition=UnlessCondition(use_sim_time),
     )
 
-    # BNO055 IMU node
-    # imu = Node(
-    #     package='tortoisebot_imu',
-    #     executable='imu_node.py',
-    #     name='imu_publisher',
-    #     output='screen',
-    #     condition=UnlessCondition(use_sim_time)
-    # )
-
+    imu = Node(
+        package='tortoisebot_imu',
+        executable='imu_node.py',
+        name='imu_publisher',
+        output='screen',
+        condition=UnlessCondition(use_sim_time),
+    )
 
     motors = Node(
         package='tortoisebot_firmware',
         executable='differential.py',
         name='differential',
         output='screen',
-        condition=UnlessCondition(use_sim_time)
+        condition=UnlessCondition(use_sim_time),
     )
 
     camera = Node(
-        package='camera_ros',
-        executable='camera_node',
+        package='v4l2_camera',
+        executable='v4l2_camera_node',
         name='camera_node',
         output='screen',
-        parameters=[
-            {'camera': camera_port},
-            {'format': 'RGB888'},
-            {'width': 800},
-            {'height': 600}
-        ],
-        condition=UnlessCondition(use_sim_time)
+        parameters=[{
+            'video_device': camera_device,
+            'image_size': [800, 600],
+            'pixel_format': 'YUYV',
+            'output_encoding': 'rgb8',
+            'camera_frame_id': 'camera_link',
+        }],
+        condition=UnlessCondition(use_sim_time),
+    )
+
+    recorder = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(bringup_pkg, 'launch', 'hardware_record.launch.py')),
+        launch_arguments={
+            'bag_dir': bag_dir,
+            'bag_name': bag_name,
+        }.items(),
+        condition=IfCondition(real_robot_and_recording_enabled(use_sim_time, record_mcap)),
     )
 
     ekf = Node(
@@ -100,8 +123,12 @@ def generate_launch_description():
         output='screen',
         parameters=[ekf_slam_params, {'use_sim_time': False}],
         condition=IfCondition(PythonExpression([
-            "'true' if ('", use_sim_time, "' == 'false' or '", use_sim_time, "' == 'False') and ('", exploration, "' == 'false' or '", exploration, "' == 'False') else 'false'"
-        ]))
+            "'true' if ('", use_sim_time,
+            "' == 'false' or '", use_sim_time,
+            "' == 'False') and ('", exploration,
+            "' == 'false' or '", exploration,
+            "' == 'False') else 'false'",
+        ])),
     )
 
     cartographer = TimerAction(
@@ -110,13 +137,21 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(slam_pkg, 'launch', 'cartographer.launch.py')),
             condition=IfCondition(PythonExpression([
-                "'true' if ('", exploration, "' == 'true' or '", exploration, "' == 'True') or ('", use_sim_time, "' == 'false' or '", use_sim_time, "' == 'False') else 'false'"
+                "'true' if ('", exploration,
+                "' == 'true' or '", exploration,
+                "' == 'True') or ('", use_sim_time,
+                "' == 'false' or '", use_sim_time,
+                "' == 'False') else 'false'",
             ])),
             launch_arguments={
                 'use_sim_time': use_sim_time,
-                'is_odom_only': PythonExpression(["'false' if '", exploration, "' == 'true' or '", exploration, "' == 'True' else 'true'"])
-            }.items()
-        )]
+                'is_odom_only': PythonExpression([
+                    "'false' if '", exploration,
+                    "' == 'true' or '", exploration,
+                    "' == 'True' else 'true'",
+                ]),
+            }.items(),
+        )],
     )
 
     navigation = TimerAction(
@@ -126,13 +161,12 @@ def generate_launch_description():
                 os.path.join(nav_pkg, 'launch', 'navigation_mapbased.launch.py')),
             condition=UnlessCondition(exploration),
             launch_arguments={
-                'map':         map_file,
+                'map': map_file,
                 'use_sim_time': use_sim_time,
-            }.items()
-        )]
+            }.items(),
+        )],
     )
 
- 
     navigation_slam = TimerAction(
         period=20.0,
         actions=[IncludeLaunchDescription(
@@ -141,8 +175,8 @@ def generate_launch_description():
             condition=IfCondition(exploration),
             launch_arguments={
                 'use_sim_time': use_sim_time,
-            }.items()
-        )]
+            }.items(),
+        )],
     )
 
     rviz = TimerAction(
@@ -154,8 +188,8 @@ def generate_launch_description():
                 'rvizconfig': nav_rviz_config,
                 'use_sim_time': use_sim_time,
             }.items(),
-            condition=IfCondition(exploration)
-        )]
+            condition=IfCondition(exploration),
+        )],
     )
 
     rviz_map = TimerAction(
@@ -167,30 +201,34 @@ def generate_launch_description():
                 'rvizconfig': sim_rviz_config,
                 'use_sim_time': use_sim_time,
             }.items(),
-            condition=UnlessCondition(exploration)
-        )]
+            condition=UnlessCondition(exploration),
+        )],
     )
 
     return LaunchDescription([
-
         SetEnvironmentVariable('RCUTILS_LOGGING_BUFFERED_STREAM', '1'),
 
         DeclareLaunchArgument('use_sim_time', default_value='True',
                               description='True=Ignition Sim, False=Real Robot'),
-        DeclareLaunchArgument('exploration',  default_value='True',
+        DeclareLaunchArgument('exploration', default_value='True',
                               description='True=SLAM mapping, False=Map-based Nav'),
-        DeclareLaunchArgument('map_file',     default_value=default_map,
+        DeclareLaunchArgument('map_file', default_value=default_map,
                               description='Path to saved map yaml (used when exploration=False)'),
-        DeclareLaunchArgument('camera_port',  default_value='0',
-                              description='Camera port (e.g. 0 for /dev/video0, or /base/soc/...)'),
-
-
+        DeclareLaunchArgument('camera_device', default_value='/dev/video0',
+                              description='V4L2 camera device path on the robot'),
+        DeclareLaunchArgument('record_mcap', default_value='False',
+                              description='Record hardware topics to MCAP when use_sim_time=False'),
+        DeclareLaunchArgument('bag_dir', default_value=os.path.expanduser('~/tortoisebot_mcap'),
+                              description='Directory where MCAP rosbag folders are written'),
+        DeclareLaunchArgument('bag_name', default_value=default_bag_name,
+                              description='MCAP rosbag folder name when record_mcap=True'),
         ignition_sim,
         state_publisher,
         lidar,
-        # imu,
+        imu,
         motors,
         camera,
+        recorder,
         cartographer,
         navigation,
         navigation_slam,
