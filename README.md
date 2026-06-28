@@ -33,6 +33,12 @@
 
 ## 1. Installation
 
+For Raspberry Pi hardware, the recommended base OS is **Ubuntu Server 22.04 LTS
+64-bit for Raspberry Pi**. ROS 2 Humble binary packages target Ubuntu Jammy, so
+that path is much cleaner than installing Humble on stock Raspberry Pi OS.
+
+SD-card provisioning files live in [`provisioning/`](provisioning/README.md).
+
 ### 1.1 Required Dependencies
 
 Install all required ROS 2 Humble packages:
@@ -375,7 +381,43 @@ Open the generated `.mcap` file in Foxglove from your PC. Raw camera frames are 
 
 ---
 
-## 5. More Wiki Resources
+## 5. Raspberry Pi SD Card Image
+
+### 5.1 Load This Repo Onto an SD Card
+
+1. Flash **Ubuntu Server 22.04 LTS 64-bit** with Raspberry Pi Imager.
+2. Use Imager's OS customization to enable SSH and configure Wi-Fi, or copy
+   [`provisioning/netplan/50-cloud-init.yaml.template`](provisioning/netplan/50-cloud-init.yaml.template)
+   to `/etc/netplan/50-cloud-init.yaml` on the SD card writable partition and
+   replace the Wi-Fi placeholders.
+3. Boot the Raspberry Pi and SSH into it.
+4. Clone this repo into `~/tb_ws/src/tortoisebot`.
+5. Run the provisioning installer:
+
+```bash
+cd ~/tb_ws/src/tortoisebot
+sudo bash provisioning/scripts/install_tortoisebot_humble.sh
+cd ~/tb_ws
+rosdep install --from-paths src --ignore-src -r -y
+colcon build
+echo "source ~/tb_ws/install/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+### 5.2 Can ROS 2 Humble and This Code Be Pre-Packaged?
+
+Yes. The practical route is to build a custom **Ubuntu Server 22.04 Raspberry Pi
+image** or use cloud-init/first-boot automation that installs ROS 2 Humble,
+clones this repo, runs `rosdep`, and builds the workspace. Baking this directly
+into stock Raspberry Pi OS is not recommended for Humble because Raspberry Pi OS
+is Debian-based while Humble apt binaries are built for Ubuntu Jammy.
+
+See [`provisioning/README.md`](provisioning/README.md) for the image workflow,
+Wi-Fi template, and install script.
+
+---
+
+## 6. More Wiki Resources
 
 The TortoiseBot documentation is continuously maintained and updated by the team at **RigBetel Labs**. The full wiki covers hardware assembly, OS flashing, advanced configuration, and project showcases.
 

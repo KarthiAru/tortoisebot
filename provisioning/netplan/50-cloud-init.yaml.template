@@ -1,0 +1,16 @@
+# Copy this file to /etc/netplan/50-cloud-init.yaml on the SD card writable
+# partition, then replace the SSID and password placeholders.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    eth0:
+      dhcp4: true
+      optional: true
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: true
+      access-points:
+        "YOUR_WIFI_SSID":
+          password: "YOUR_WIFI_PASSWORD"
