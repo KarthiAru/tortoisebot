@@ -259,20 +259,21 @@ function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
   if ($partitions.Count -eq 0) { return }
 
-  Write-Info "Dismounting volumes on disk $TargetDiskNumber"
+  Write-Info "Removing drive letters/access paths on disk $TargetDiskNumber"
   foreach ($partition in $partitions) {
-    $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
-    foreach ($volume in $volumes) {
-      if ($volume.DriveLetter) {
-        Write-Info "Dismounting $($volume.DriveLetter):"
-        Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction SilentlyContinue | Out-Null
-      }
-    }
-
     $accessPaths = @($partition.AccessPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     foreach ($accessPath in $accessPaths) {
       Write-Info "Removing access path $accessPath from disk $TargetDiskNumber partition $($partition.PartitionNumber)"
       Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath $accessPath -ErrorAction SilentlyContinue
+    }
+
+    $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
+    foreach ($volume in $volumes) {
+      if ($volume.DriveLetter) {
+        Write-Info "Removing drive letter $($volume.DriveLetter):"
+        Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath "$($volume.DriveLetter):\" -ErrorAction SilentlyContinue
+        cmd.exe /d /c "mountvol $($volume.DriveLetter): /p" | Out-Null
+      }
     }
   }
 
@@ -287,9 +288,9 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   Write-Host "  Disk:  $TargetDiskNumber"
   Write-Host "  Size:  $([math]::Round($disk.Size / 1GB, 2)) GB"
   Write-Host "  Image: $ImgPath"
-  $confirmation = Read-Host "Type FLASH DISK $TargetDiskNumber to continue"
-  if ($confirmation -ne "FLASH DISK $TargetDiskNumber") {
-    throw "Confirmation failed; not writing the SD card."
+  $confirmation = Read-Host "Proceed with flashing disk $TargetDiskNumber? (Y/N)"
+  if ($confirmation.Trim().ToUpperInvariant() -ne "Y") {
+    throw "Confirmation declined; not writing the SD card."
   }
 
   if ($PSCmdlet.ShouldProcess("PhysicalDrive$TargetDiskNumber", "write image $ImgPath")) {

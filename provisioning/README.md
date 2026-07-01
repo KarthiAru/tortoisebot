@@ -64,7 +64,7 @@ The Ubuntu `.img.xz` and expanded `.img` are cached in `%LOCALAPPDATA%\TortoiseB
 - `meta-data`
 - `network-config`
 
-The write step is destructive and still requires typing `FLASH DISK <disk number>` before
+The write step is destructive and still requires answering `Y` before
 anything is written. Drive letters are easier to recognize, but raw image writing
 happens to the whole physical disk underneath that drive letter.
 
