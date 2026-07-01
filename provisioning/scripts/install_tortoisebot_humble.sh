@@ -27,6 +27,7 @@ apt-get install -y \
   build-essential \
   cmake \
   git \
+  python3-ament-package \
   python3-colcon-common-extensions \
   python3-pip \
   python3-rosdep \
@@ -34,6 +35,8 @@ apt-get install -y \
   i2c-tools \
   v4l-utils \
   ros-humble-ros-base \
+  ros-humble-ament-cmake \
+  ros-humble-ament-index-python \
   ros-humble-joint-state-publisher \
   ros-humble-robot-state-publisher \
   ros-humble-cartographer \
