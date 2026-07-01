@@ -11,6 +11,8 @@ users:
     shell: /bin/bash
     lock_passwd: false
     sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - "__SSH_AUTHORIZED_KEY__"
 
 chpasswd:
   expire: false
@@ -87,7 +89,7 @@ write_files:
       To monitor install progress:
         tail -f /var/log/tortoisebot-install.log
 
-  - path: /etc/ssh/sshd_config.d/99-tortoisebot-password-auth.conf
+  - path: /etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
     owner: root:root
     permissions: '0644'
     content: |

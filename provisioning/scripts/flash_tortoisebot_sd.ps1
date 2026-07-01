@@ -20,6 +20,7 @@ param(
   [string]$HostName = "tortoisebot",
   [string]$Username = "tortoisebot",
   [string]$UserPassword = "raspberry",
+  [string]$SshAuthorizedKey,
   [string]$RepoUrl = "https://github.com/KarthiAru/tortoisebot.git",
   [string]$RepoBranch = "mcap-logging",
   [string]$ImageUrl = "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz",
@@ -554,6 +555,14 @@ function Escape-YamlDoubleQuoted([string]$Value) {
   return $Value.Replace("\", "\\").Replace('"', '\"')
 }
 
+function Get-DefaultSshAuthorizedKey {
+  $publicKeyPath = Join-Path $env:USERPROFILE ".ssh\id_ed25519.pub"
+  if (Test-Path $publicKeyPath) {
+    return (Get-Content -Raw $publicKeyPath).Trim()
+  }
+  return ""
+}
+
 function Render-Template([string]$TemplatePath, [string]$DestinationPath, [hashtable]$Values) {
   $content = Get-Content -Raw $TemplatePath
   foreach ($key in $Values.Keys) {
@@ -603,6 +612,7 @@ $values = @{
   WIFI_PASSWORD = Escape-YamlDoubleQuoted $WifiPassword
   REPO_URL      = $RepoUrl
   REPO_BRANCH   = $RepoBranch
+  SSH_AUTHORIZED_KEY = Escape-YamlDoubleQuoted $(if ([string]::IsNullOrWhiteSpace($SshAuthorizedKey)) { Get-DefaultSshAuthorizedKey } else { $SshAuthorizedKey })
 }
 
 Render-Template (Join-Path $templateDir "user-data.template") (Join-Path $bootRoot "user-data") $values
