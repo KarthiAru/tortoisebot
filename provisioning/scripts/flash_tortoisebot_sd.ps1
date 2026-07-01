@@ -301,7 +301,7 @@ function Lock-VolumeByDriveLetter([string]$DriveLetter) {
   Initialize-NativeVolumeApi
   $letter = Normalize-DriveLetter $DriveLetter
   $path = "\\.\${letter}:"
-  $genericReadWrite = [uint32]0xC0000000
+  $genericReadWrite = [uint32]3221225472
   $shareReadWrite = [uint32]0x00000003
   $openExisting = [uint32]3
   $fsctlLockVolume = [uint32]0x00090018
