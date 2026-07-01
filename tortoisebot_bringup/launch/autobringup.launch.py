@@ -124,6 +124,10 @@ def generate_launch_description():
             'height': 480,
             'frame_id': 'camera_link',
         }],
+        remappings=[
+            ('~/image_raw', '/camera/image_raw'),
+            ('~/camera_info', '/camera/camera_info'),
+        ],
         condition=IfCondition(real_robot_enabled_and_driver(
             use_sim_time, enable_camera, camera_driver, 'libcamera')),
     )
