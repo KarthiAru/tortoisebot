@@ -29,6 +29,7 @@ param(
   [Alias("Config")]
   [string]$LocalConfigPath,
   [switch]$ForceDownload,
+  [switch]$SkipFlash,
   [switch]$Force
 )
 
@@ -476,31 +477,47 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
         Restore-ReadablePartitionDriveLetter -TargetDiskNumber $TargetDiskNumber -PreferredDriveLetter $preferredDriveLetter
       }
     }
+    if ($writeCompleted) {
+      Write-Info "Image write complete"
+    }
   }
 }
 
 function Wait-SystemBootVolume([int]$TargetDiskNumber) {
-  Write-Info "Waiting for Windows to mount the system-boot partition"
+  Write-Info "Mounting system-boot partition"
+  $preferredDriveLetter = if (-not [string]::IsNullOrWhiteSpace($DriveLetter)) { Normalize-DriveLetter $DriveLetter } else { $null }
+
   for ($i = 0; $i -lt 60; $i++) {
     Update-HostStorageCache
-    $volumes = Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue | Get-Volume -ErrorAction SilentlyContinue
-    $boot = $volumes | Where-Object { $_.FileSystemLabel -eq "system-boot" -or $_.FileSystemLabel -eq "system-boot-0" } | Select-Object -First 1
-    if ($boot) {
-      if (-not $boot.DriveLetter) {
-        $used = (Get-Volume | Where-Object DriveLetter | Select-Object -ExpandProperty DriveLetter)
-        $blocked = @($BlockedDriveLetters | ForEach-Object { Normalize-DriveLetter $_ })
-        $letter = [char[]]([char]'D'..[char]'Z') | Where-Object { $used -notcontains $_ -and $blocked -notcontains ([string]$_) } | Select-Object -First 1
-        if (-not $letter) { throw "No free drive letter available for system-boot." }
-        $partition = Get-Partition -DiskNumber $TargetDiskNumber | Where-Object { $_.Guid -eq $boot.UniqueId -or $_.Type -eq "System" } | Select-Object -First 1
-        if ($partition) { Set-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $letter }
+    $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue | Sort-Object PartitionNumber)
+    foreach ($partition in $partitions) {
+      $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+      if (-not $volume) { continue }
+
+      $isSystemBoot = $volume.FileSystemLabel -eq "system-boot" -or $volume.FileSystemLabel -eq "system-boot-0"
+      $isLikelyBoot = $volume.FileSystem -eq "FAT32" -and $partition.Size -lt 1GB
+      if (-not ($isSystemBoot -or $isLikelyBoot)) { continue }
+
+      if (-not $volume.DriveLetter) {
+        $letter = Get-AvailableDriveLetter $preferredDriveLetter
+        if (-not $letter) { throw "No safe drive letter is available for system-boot." }
+        Write-Info "Assigning ${letter}: to system-boot"
+        Set-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $letter -ErrorAction Stop
         Start-Sleep -Seconds 2
-        $boot = Get-Volume -DriveLetter $letter
+        $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
       }
-      return "$($boot.DriveLetter):\"
+
+      Write-Info "system-boot mounted at $($volume.DriveLetter):\"
+      return "$($volume.DriveLetter):\"
+    }
+
+    if ($i -eq 10) {
+      Write-Info "Still waiting for Windows to expose system-boot"
     }
     Start-Sleep -Seconds 2
   }
-  throw "Could not find the system-boot partition. Remove/reinsert the SD card and copy cloud-init files manually if needed."
+
+  throw "Image write completed, but Windows did not expose the system-boot partition. Remove/reinsert the SD card, then rerun with -SkipFlash -DiskNumber $TargetDiskNumber."
 }
 
 function Escape-YamlDoubleQuoted([string]$Value) {
@@ -529,14 +546,19 @@ if ([string]::IsNullOrWhiteSpace($WifiSsid) -or [string]::IsNullOrWhiteSpace($Wi
   throw "Pass -WifiSsid and -WifiPassword, or create provisioning/config/tortoisebot-flash.local.ps1."
 }
 
-New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
-$imageName = Get-FileNameFromUrl $ImageUrl
-$xzPath = Join-Path $CacheDir $imageName
-$imgPath = Join-Path $CacheDir ($imageName -replace '\.xz$', '')
+if (-not $SkipFlash) {
+  New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
+  $imageName = Get-FileNameFromUrl $ImageUrl
+  $xzPath = Join-Path $CacheDir $imageName
+  $imgPath = Join-Path $CacheDir ($imageName -replace '\.xz$', '')
 
-Download-Image -Url $ImageUrl -Destination $xzPath
-Expand-XzImage -XzPath $xzPath -ImgPath $imgPath
-Write-RawImage -ImgPath $imgPath -TargetDiskNumber $TargetDiskNumber
+  Download-Image -Url $ImageUrl -Destination $xzPath
+  Expand-XzImage -XzPath $xzPath -ImgPath $imgPath
+  Write-RawImage -ImgPath $imgPath -TargetDiskNumber $TargetDiskNumber
+}
+else {
+  Write-Info "Skipping image write; using existing SD card partitions"
+}
 
 $bootRoot = Wait-SystemBootVolume -TargetDiskNumber $TargetDiskNumber
 Write-Info "Writing cloud-init files to $bootRoot"
