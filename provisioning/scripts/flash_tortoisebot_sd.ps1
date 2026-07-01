@@ -324,6 +324,31 @@ function Lock-VolumeByDriveLetter([string]$DriveLetter) {
     throw
   }
 }
+
+function Open-PhysicalDriveForWrite([int]$TargetDiskNumber) {
+  Initialize-NativeVolumeApi
+  $path = "\\.\PhysicalDrive$TargetDiskNumber"
+  $genericWrite = [uint32]0x40000000
+  $shareReadWrite = [uint32]0x00000003
+  $openExisting = [uint32]3
+  $fileAttributeNormal = [uint32]0x00000080
+  $fsctlAllowExtendedDasdIo = [uint32]0x00090083
+
+  $handle = [NativeVolume]::CreateFile($path, $genericWrite, $shareReadWrite, [IntPtr]::Zero, $openExisting, $fileAttributeNormal, [IntPtr]::Zero)
+  if ($handle.IsInvalid) {
+    $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "Access denied opening $path. Win32 error $errorCode. Close File Explorer or any program using the SD card, unplug/reinsert the card, then rerun the script and choose the current drive letter."
+  }
+
+  try {
+    Invoke-VolumeIoControl -Handle $handle -ControlCode $fsctlAllowExtendedDasdIo -Description "Allow extended DASD I/O on $path"
+  }
+  catch {
+    Write-Warning "$($_.Exception.Message) Continuing; some removable readers do not support this control code."
+  }
+
+  return $handle
+}
 function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
   if ($partitions.Count -eq 0) { return @() }
@@ -392,14 +417,11 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
     $buffer = New-Object byte[] (8MB)
     $inputStream = $null
     $outputStream = $null
+    $physicalHandle = $null
     try {
       $inputStream = [IO.File]::Open($ImgPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-      try {
-        $outputStream = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
-      }
-      catch [UnauthorizedAccessException] {
-        throw "Access denied opening $target. Close File Explorer or any program using the SD card, unplug/reinsert the card, then rerun the script and choose the current drive letter."
-      }
+      $physicalHandle = Open-PhysicalDriveForWrite -TargetDiskNumber $TargetDiskNumber
+      $outputStream = [IO.FileStream]::new($physicalHandle, [IO.FileAccess]::Write, $buffer.Length)
       $total = $inputStream.Length
       $written = 0L
       while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
@@ -411,6 +433,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
     }
     finally {
       if ($outputStream) { $outputStream.Dispose() }
+      elseif ($physicalHandle) { $physicalHandle.Dispose() }
       if ($inputStream) { $inputStream.Dispose() }
       Write-Progress -Activity "Writing SD card image" -Completed
       foreach ($lock in $volumeLocks) {
