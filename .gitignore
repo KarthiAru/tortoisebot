@@ -1,0 +1,4 @@
+provisioning/config/*.local.env
+provisioning/config/*.local.ps1
+provisioning/cache/
+provisioning/output/
