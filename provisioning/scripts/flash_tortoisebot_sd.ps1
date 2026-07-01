@@ -61,13 +61,13 @@ function Show-CandidateDisks {
     Where-Object DriveLetter |
     Sort-Object DriveLetter |
     Select-Object DriveLetter, FileSystemLabel, FileSystem, SizeRemaining, Size |
-    Format-Table -AutoSize
+    Format-Table -AutoSize | Out-Host
 
   Write-Host "Physical disks:" -ForegroundColor Cyan
   Get-Disk |
     Sort-Object Number |
     Select-Object Number, FriendlyName, BusType, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly |
-    Format-Table -AutoSize
+    Format-Table -AutoSize | Out-Host
 }
 
 function Normalize-DriveLetter([string]$Letter) {
@@ -81,7 +81,7 @@ function Normalize-DriveLetter([string]$Letter) {
 
 function Resolve-DiskNumberFromDriveLetter([string]$Letter) {
   $normalized = Normalize-DriveLetter $Letter
-  $partition = Get-Partition -DriveLetter $normalized -ErrorAction Stop
+  $partition = Get-Partition -DriveLetter $normalized -ErrorAction Stop | Select-Object -First 1
   return [int]$partition.DiskNumber
 }
 
@@ -271,7 +271,7 @@ if ($ListDisks) {
   return
 }
 
-$TargetDiskNumber = Select-TargetDiskNumber
+$TargetDiskNumber = [int](Select-TargetDiskNumber)
 if ([string]::IsNullOrWhiteSpace($WifiSsid) -or [string]::IsNullOrWhiteSpace($WifiPassword)) {
   throw "Pass -WifiSsid and -WifiPassword, or create provisioning/config/tortoisebot-flash.local.ps1."
 }
