@@ -17,11 +17,11 @@ chpasswd:
   list: |
     __USERNAME__:__PASSWORD__
 
-package_update: true
+package_update: false
 package_upgrade: false
 
 write_files:
-  - path: /usr/local/sbin/tortoisebot-firstboot.sh
+  - path: /usr/local/sbin/tortoisebot-install.sh
     owner: root:root
     permissions: '0755'
     content: |
@@ -33,9 +33,18 @@ write_files:
       REPO_BRANCH="__REPO_BRANCH__"
       WS="/home/${USERNAME}/tb_ws"
       REPO_DIR="${WS}/src/tortoisebot"
-      SENTINEL="/var/lib/tortoisebot/.firstboot-complete"
+      LOG_FILE="/var/log/tortoisebot-install.log"
+      SENTINEL="/var/lib/tortoisebot/.install-complete"
+
+      install -d /var/lib/tortoisebot
+      touch "${LOG_FILE}"
+      chmod 0644 "${LOG_FILE}"
+      exec > >(tee -a "${LOG_FILE}") 2>&1
+
+      echo "==> TortoiseBot install started at $(date -Is)"
 
       if [[ -f "${SENTINEL}" ]]; then
+        echo "==> TortoiseBot install already completed. Remove ${SENTINEL} to force a reinstall."
         exit 0
       fi
 
@@ -63,10 +72,19 @@ write_files:
       fi
       chown "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.bashrc"
 
-      install -d /var/lib/tortoisebot
       touch "${SENTINEL}"
+      echo "==> TortoiseBot install complete at $(date -Is)"
 
-runcmd:
-  - [ bash, -lc, "/usr/local/sbin/tortoisebot-firstboot.sh 2>&1 | tee /var/log/tortoisebot-firstboot.log" ]
+  - path: /etc/motd
+    owner: root:root
+    permissions: '0644'
+    content: |
+      TortoiseBot Raspberry Pi is online.
 
-final_message: "TortoiseBot first boot provisioning complete. See /var/log/tortoisebot-firstboot.log."
+      To install ROS 2 Humble and the TortoiseBot workspace, run:
+        sudo /usr/local/sbin/tortoisebot-install.sh
+
+      To monitor install progress:
+        tail -f /var/log/tortoisebot-install.log
+
+final_message: "TortoiseBot base boot complete. SSH in and run: sudo /usr/local/sbin/tortoisebot-install.sh"

@@ -8,8 +8,8 @@ The repeatable flow is:
 
 1. Flash the Ubuntu Raspberry Pi image to the microSD card.
 2. Inject cloud-init Wi-Fi, user, repo, and first-boot installer config.
-3. Boot the Pi and let cloud-init install ROS 2 Humble, clone this repo, run
-   `rosdep`, and build the workspace.
+3. Boot the Pi, SSH in, then manually start the TortoiseBot installer while
+   monitoring the log.
 
 ## Windows Automated Flashing
 
@@ -70,11 +70,11 @@ happens to the whole physical disk underneath that drive letter.
 
 By default, `BlockedDriveLetters = @("C", "D")`, so the script refuses to target any disk containing either of those drive letters and will not assign them while mounting `system-boot`. It also refuses disks that are 128 GB or larger by default.
 
-## First Boot
+## First Boot and Manual Install
 
-Insert the card into the Raspberry Pi and boot it. Provisioning can take a while
-because ROS 2, Nav2, Cartographer, rosbag2 MCAP support, and the workspace build
-all run on first boot.
+Insert the card into the Raspberry Pi and boot it. Cloud-init only brings up the
+base system: hostname, user, SSH, and Wi-Fi. It does not install ROS 2 or build
+the workspace automatically.
 
 SSH in after the Pi joins Wi-Fi:
 
@@ -90,16 +90,26 @@ Default generated login is:
 | Username | `tortoisebot` |
 | Password | `raspberry` |
 
-Watch first-boot progress:
+Start the TortoiseBot install manually:
 
 ```bash
-sudo tail -f /var/log/tortoisebot-firstboot.log
+sudo /usr/local/sbin/tortoisebot-install.sh
 ```
 
-The first-boot script is idempotent and writes this sentinel when complete:
+The installer logs to the console and to disk. From another SSH session, monitor
+progress with:
 
 ```bash
-/var/lib/tortoisebot/.firstboot-complete
+tail -f /var/log/tortoisebot-install.log
+```
+
+This step can take a while because ROS 2, Nav2, Cartographer, rosbag2 MCAP
+support, and the workspace build all run on the Raspberry Pi.
+
+The manual install script is idempotent and writes this sentinel when complete:
+
+```bash
+/var/lib/tortoisebot/.install-complete
 ```
 
 ## Manual Flashing Fallback
