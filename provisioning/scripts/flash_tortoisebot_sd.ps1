@@ -604,6 +604,15 @@ $bootRoot = Wait-SystemBootVolume -TargetDiskNumber $TargetDiskNumber
 Write-Info "Writing cloud-init files to $bootRoot"
 
 $templateDir = Join-Path $ProvisioningDir "cloud-init"
+$resolvedSshAuthorizedKey = if ([string]::IsNullOrWhiteSpace($SshAuthorizedKey)) { Get-DefaultSshAuthorizedKey } else { $SshAuthorizedKey.Trim() }
+if ([string]::IsNullOrWhiteSpace($resolvedSshAuthorizedKey)) {
+  throw "No SSH public key was found. Create $env:USERPROFILE\.ssh\id_ed25519.pub or pass -SshAuthorizedKey with a public key."
+}
+if ($resolvedSshAuthorizedKey -notmatch '^ssh-(ed25519|rsa|ecdsa)\s+\S+') {
+  throw "SSH authorized key does not look like an OpenSSH public key. Got: $resolvedSshAuthorizedKey"
+}
+Write-Info "Seeding SSH public key for $Username"
+
 $values = @{
   HOSTNAME      = $HostName
   USERNAME      = $Username
@@ -612,7 +621,7 @@ $values = @{
   WIFI_PASSWORD = Escape-YamlDoubleQuoted $WifiPassword
   REPO_URL      = $RepoUrl
   REPO_BRANCH   = $RepoBranch
-  SSH_AUTHORIZED_KEY = Escape-YamlDoubleQuoted $(if ([string]::IsNullOrWhiteSpace($SshAuthorizedKey)) { Get-DefaultSshAuthorizedKey } else { $SshAuthorizedKey })
+  SSH_AUTHORIZED_KEY = Escape-YamlDoubleQuoted $resolvedSshAuthorizedKey
 }
 
 Render-Template (Join-Path $templateDir "user-data.template") (Join-Path $bootRoot "user-data") $values
