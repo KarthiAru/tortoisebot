@@ -70,7 +70,12 @@ fi
 if ! rosdep db 2>/dev/null | grep -q "humble"; then
   rosdep init || true
 fi
-rosdep update
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && id "${SUDO_USER}" >/dev/null 2>&1; then
+  rosdep fix-permissions || true
+  sudo -u "${SUDO_USER}" rosdep update
+else
+  rosdep update
+fi
 
 if ! grep -q "/opt/ros/humble/setup.bash" /home/*/.bashrc 2>/dev/null; then
   for bashrc in /home/*/.bashrc; do

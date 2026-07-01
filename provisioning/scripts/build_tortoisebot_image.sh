@@ -475,7 +475,9 @@ bash "\${REPO_DIR}/provisioning/scripts/install_tortoisebot_humble.sh"
 
 cd "\${WS}"
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
+chown -R "\${USERNAME}:\${USERNAME}" "\${WS}"
 sudo -u "\${USERNAME}" bash -lc "source /opt/ros/humble/setup.bash && cd '\${WS}' && colcon build"
+chown -R "\${USERNAME}:\${USERNAME}" "\${WS}"
 
 if ! grep -q "\${WS}/install/setup.bash" "/home/\${USERNAME}/.bashrc"; then
   echo "source \${WS}/install/setup.bash" >> "/home/\${USERNAME}/.bashrc"
