@@ -403,6 +403,11 @@ network:
 NETPLAN
 chmod 0600 "${ROOT_MOUNT}/etc/netplan/99-tortoisebot-wifi.yaml"
 
+install -d "${ROOT_MOUNT}/etc/cloud/cloud.cfg.d"
+cat > "${ROOT_MOUNT}/etc/cloud/cloud.cfg.d/99-tortoisebot-disable-network-config.cfg" <<CLOUD_NETWORK
+network: {config: disabled}
+CLOUD_NETWORK
+
 cat > "${BOOT_MOUNT}/network-config" <<NETPLAN
 version: 2
 ethernets:
@@ -430,6 +435,8 @@ manage_etc_hosts: true
 ssh_pwauth: true
 package_update: false
 package_upgrade: false
+runcmd:
+  - [ touch, /etc/cloud/cloud-init.disabled ]
 final_message: "TortoiseBot image boot complete. SSH in and run: sudo /usr/local/sbin/tortoisebot-install.sh"
 USERDATA
 
