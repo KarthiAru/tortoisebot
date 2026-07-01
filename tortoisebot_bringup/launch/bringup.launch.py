@@ -1,149 +1,60 @@
 #!/usr/bin/env python3
 
 import os
-from launch import LaunchDescription
-from launch.actions import (
-    IncludeLaunchDescription,
-    DeclareLaunchArgument,
-    TimerAction,
-)
-from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from datetime import datetime
+
 from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-
-    desc_pkg    = get_package_share_directory('tortoisebot_description')
-    gazebo_pkg  = get_package_share_directory('tortoisebot_gazebo')
-    slam_pkg    = get_package_share_directory('tortoisebot_slam')
-    nav_pkg     = get_package_share_directory('tortoisebot_navigation')
     bringup_pkg = get_package_share_directory('tortoisebot_bringup')
-
+    nav_pkg = get_package_share_directory('tortoisebot_navigation')
+    autobringup_launch = os.path.join(
+        bringup_pkg,
+        'launch',
+        'autobringup.launch.py',
+    )
     default_map = os.path.join(nav_pkg, 'maps', 'explored_map.yaml')
-    rviz_sim    = os.path.join(desc_pkg, 'rviz', 'simulation.rviz')
+    default_bag_name = datetime.now().strftime('tortoisebot_hardware_%Y%m%d_%H%M%S')
 
-    gui      = LaunchConfiguration('gui')
-    slam     = LaunchConfiguration('slam')
-    nav      = LaunchConfiguration('nav')
-
-    declare_gui = DeclareLaunchArgument(
-        'gui', default_value='True',
-        description='Launch Ignition Gazebo with GUI'
-    )
-    declare_slam = DeclareLaunchArgument(
-        'slam', default_value='False',
-        description='Enable Cartographer SLAM mapping'
-    )
-    declare_nav = DeclareLaunchArgument(
-        'nav', default_value='False',
-        description='Enable Nav2 navigation'
-    )
-
-    simulation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(gazebo_pkg, 'launch', 'ignition_sim.launch.py')
-        ),
-        launch_arguments={'gui': gui}.items()
-    )
-
-    rviz_simonly = TimerAction(
-        period=2.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(desc_pkg, 'launch', 'rviz.launch.py')
-            ),
-            launch_arguments={'rvizconfig': rviz_sim}.items(),
-            condition=IfCondition(
-                PythonExpression([
-                    "'", slam, "' == 'False' and '", nav, "' == 'False'"
-                ])
-            )
-        )]
-    )
-
-    rviz_nav = TimerAction(
-        period=2.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(desc_pkg, 'launch', 'rviz.launch.py')
-            ),
-            launch_arguments={'rvizconfig': rviz_sim}.items(),
-            condition=IfCondition(nav)
-        )]
-    )
-
-    cartographer = TimerAction(
-        period=4.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(slam_pkg, 'launch', 'cartographer.launch.py')
-            ),
-            launch_arguments={'use_sim_time': 'True'}.items(),
-            condition=IfCondition(
-                PythonExpression([
-                    "'", slam, "' == 'True' and '", nav, "' == 'False'"
-                ])
-            )
-        )]
-    )
-
-    nav_mapbased = TimerAction(
-        period=5.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(nav_pkg, 'launch', 'navigation_mapbased.launch.py')
-            ),
-            launch_arguments={'use_sim_time': 'True'}.items(),
-            condition=IfCondition(
-                PythonExpression([
-                    "'", nav, "' == 'True' and '", slam, "' == 'False'"
-                ])
-            )
-        )]
-    )
-
-    cartographer_with_nav = TimerAction(
-        period=5.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(slam_pkg, 'launch', 'cartographer.launch.py')
-            ),
-            launch_arguments={'use_sim_time': 'True'}.items(),
-            condition=IfCondition(
-                PythonExpression([
-                    "'", nav, "' == 'True' and '", slam, "' == 'True'"
-                ])
-            )
-        )]
-    )
-
-    nav_slam = TimerAction(
-        period=8.0,
-        actions=[IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(nav_pkg, 'launch', 'navigation_slam.launch.py')
-            ),
-            launch_arguments={'use_sim_time': 'True'}.items(),
-            condition=IfCondition(
-                PythonExpression([
-                    "'", nav, "' == 'True' and '", slam, "' == 'True'"
-                ])
-            )
-        )]
-    )
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    exploration = LaunchConfiguration('exploration')
+    map_file = LaunchConfiguration('map_file')
+    camera_device = LaunchConfiguration('camera_device')
+    record_mcap = LaunchConfiguration('record_mcap')
+    bag_dir = LaunchConfiguration('bag_dir')
+    bag_name = LaunchConfiguration('bag_name')
 
     return LaunchDescription([
-        declare_gui,
-        declare_slam,
-        declare_nav,
+        DeclareLaunchArgument('use_sim_time', default_value='False',
+                              description='False=Real Robot, True=Ignition simulation'),
+        DeclareLaunchArgument('exploration', default_value='True',
+                              description='True=SLAM mapping, False=Map-based Nav'),
+        DeclareLaunchArgument('map_file', default_value=default_map,
+                              description='Path to saved map yaml when exploration=False'),
+        DeclareLaunchArgument('camera_device', default_value='/dev/video0',
+                              description='V4L2 camera device path on the robot'),
+        DeclareLaunchArgument('record_mcap', default_value='False',
+                              description='Record hardware topics to MCAP when use_sim_time=False'),
+        DeclareLaunchArgument('bag_dir', default_value=os.path.expanduser('~/tortoisebot_mcap'),
+                              description='Directory where MCAP rosbag folders are written'),
+        DeclareLaunchArgument('bag_name', default_value=default_bag_name,
+                              description='MCAP rosbag folder name when record_mcap=True'),
 
-        simulation,
-        rviz_simonly,
-        rviz_nav,
-        cartographer,
-        nav_mapbased,
-        cartographer_with_nav,
-        nav_slam,
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(autobringup_launch),
+            launch_arguments={
+                'use_sim_time': use_sim_time,
+                'exploration': exploration,
+                'map_file': map_file,
+                'camera_device': camera_device,
+                'record_mcap': record_mcap,
+                'bag_dir': bag_dir,
+                'bag_name': bag_name,
+            }.items(),
+        ),
     ])
