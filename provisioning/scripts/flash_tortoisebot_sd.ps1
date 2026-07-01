@@ -254,6 +254,31 @@ function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
 
   throw "Need 7z.exe, xz.exe, or WSL with xz to expand raw .img.xz images."
 }
+
+function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
+  $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
+  if ($partitions.Count -eq 0) { return }
+
+  Write-Info "Dismounting volumes on disk $TargetDiskNumber"
+  foreach ($partition in $partitions) {
+    $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
+    foreach ($volume in $volumes) {
+      if ($volume.DriveLetter) {
+        Write-Info "Dismounting $($volume.DriveLetter):"
+        Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction SilentlyContinue | Out-Null
+      }
+    }
+
+    $accessPaths = @($partition.AccessPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($accessPath in $accessPaths) {
+      Write-Info "Removing access path $accessPath from disk $TargetDiskNumber partition $($partition.PartitionNumber)"
+      Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath $accessPath -ErrorAction SilentlyContinue
+    }
+  }
+
+  Update-HostStorageCache
+  Start-Sleep -Seconds 2
+}
 function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
 
@@ -279,14 +304,26 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       if ($_.Exception.Message -notmatch "Not Supported|Removable media cannot be set to offline") {
         throw
       }
-      Write-Warning "Windows cannot set removable media offline; continuing with raw write. Close Explorer windows for this SD card if the write fails."
+      Write-Warning "Windows cannot set removable media offline; dismounting volumes before raw write."
+      Dismount-TargetDiskVolumes -TargetDiskNumber $TargetDiskNumber
+    }
+
+    if (-not $diskWasSetOffline) {
+      Dismount-TargetDiskVolumes -TargetDiskNumber $TargetDiskNumber
     }
 
     $target = "\\.\PhysicalDrive$TargetDiskNumber"
     $buffer = New-Object byte[] (8MB)
-    $inputStream = [IO.File]::Open($ImgPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-    $outputStream = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+    $inputStream = $null
+    $outputStream = $null
     try {
+      $inputStream = [IO.File]::Open($ImgPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+      try {
+        $outputStream = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+      }
+      catch [UnauthorizedAccessException] {
+        throw "Access denied opening $target. Close File Explorer or any program using the SD card, unplug/reinsert the card, then rerun the script and choose the current drive letter."
+      }
       $total = $inputStream.Length
       $written = 0L
       while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
@@ -297,8 +334,8 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       $outputStream.Flush()
     }
     finally {
-      $outputStream.Dispose()
-      $inputStream.Dispose()
+      if ($outputStream) { $outputStream.Dispose() }
+      if ($inputStream) { $inputStream.Dispose() }
       Write-Progress -Activity "Writing SD card image" -Completed
       if ($diskWasSetOffline) {
         Set-Disk -Number $TargetDiskNumber -IsOffline $false -ErrorAction SilentlyContinue
