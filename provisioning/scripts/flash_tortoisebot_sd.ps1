@@ -268,9 +268,19 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   }
 
   if ($PSCmdlet.ShouldProcess("PhysicalDrive$TargetDiskNumber", "write image $ImgPath")) {
-    Write-Info "Taking disk offline for raw write"
+    Write-Info "Preparing disk for raw write"
     Set-Disk -Number $TargetDiskNumber -IsReadOnly $false -ErrorAction SilentlyContinue
-    Set-Disk -Number $TargetDiskNumber -IsOffline $true
+    $diskWasSetOffline = $false
+    try {
+      Set-Disk -Number $TargetDiskNumber -IsOffline $true -ErrorAction Stop
+      $diskWasSetOffline = $true
+    }
+    catch {
+      if ($_.Exception.Message -notmatch "Not Supported|Removable media cannot be set to offline") {
+        throw
+      }
+      Write-Warning "Windows cannot set removable media offline; continuing with raw write. Close Explorer windows for this SD card if the write fails."
+    }
 
     $target = "\\.\PhysicalDrive$TargetDiskNumber"
     $buffer = New-Object byte[] (8MB)
@@ -290,7 +300,9 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       $outputStream.Dispose()
       $inputStream.Dispose()
       Write-Progress -Activity "Writing SD card image" -Completed
-      Set-Disk -Number $TargetDiskNumber -IsOffline $false
+      if ($diskWasSetOffline) {
+        Set-Disk -Number $TargetDiskNumber -IsOffline $false -ErrorAction SilentlyContinue
+      }
       Update-HostStorageCache
     }
   }
