@@ -473,6 +473,10 @@ fi
 
 bash "\${REPO_DIR}/provisioning/scripts/install_tortoisebot_humble.sh"
 
+# The YDLidar SDK is installed as a native CMake package above. Do not let
+# colcon discover it as a workspace package and race the ROS driver build.
+touch "\${REPO_DIR}/YDLidar-SDK/COLCON_IGNORE"
+
 cd "\${WS}"
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
 chown -R "\${USERNAME}:\${USERNAME}" "\${WS}"
