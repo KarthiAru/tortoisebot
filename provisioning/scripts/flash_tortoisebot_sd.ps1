@@ -557,7 +557,8 @@ function Escape-YamlDoubleQuoted([string]$Value) {
 function Render-Template([string]$TemplatePath, [string]$DestinationPath, [hashtable]$Values) {
   $content = Get-Content -Raw $TemplatePath
   foreach ($key in $Values.Keys) {
-    $content = $content.Replace("__$key__", [string]$Values[$key])
+    $token = "__" + $key + "__"
+    $content = $content.Replace($token, [string]$Values[$key])
   }
   Set-Content -Path $DestinationPath -Value $content -Encoding UTF8 -NoNewline
 }
