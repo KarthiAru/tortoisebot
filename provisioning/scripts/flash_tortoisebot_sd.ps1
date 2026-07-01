@@ -288,7 +288,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   Write-Host "  Disk:  $TargetDiskNumber"
   Write-Host "  Size:  $([math]::Round($disk.Size / 1GB, 2)) GB"
   Write-Host "  Image: $ImgPath"
-  $confirmation = Read-Host "Proceed with flashing disk $TargetDiskNumber? (Y/N)"
+  $confirmation = Read-Host "Proceed with flashing disk ${TargetDiskNumber}? (Y/N)"
   if ($confirmation.Trim().ToUpperInvariant() -ne "Y") {
     throw "Confirmation declined; not writing the SD card."
   }
