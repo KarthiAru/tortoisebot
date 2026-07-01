@@ -25,6 +25,7 @@ apt-get update
 apt-get install -y \
   ca-certificates \
   build-essential \
+  cmake \
   git \
   python3-colcon-common-extensions \
   python3-pip \
@@ -76,6 +77,29 @@ if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && id "${SUDO_USER}" >/
 else
   rosdep update
 fi
+
+install_ydlidar_sdk() {
+  local repo_dir
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  local sdk_dir="${repo_dir}/YDLidar-SDK"
+  local build_dir="/tmp/ydlidar_sdk_build"
+
+  if [[ ! -f "${sdk_dir}/CMakeLists.txt" ]]; then
+    echo "YDLidar-SDK not found at ${sdk_dir}; skipping SDK install."
+    return 0
+  fi
+
+  cmake -S "${sdk_dir}" -B "${build_dir}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_EXAMPLES=OFF \
+    -DBUILD_TEST=OFF \
+    -DBUILD_CSHARP=OFF
+  cmake --build "${build_dir}" --parallel "$(nproc)"
+  cmake --install "${build_dir}"
+  ldconfig
+}
+
+install_ydlidar_sdk
 
 if ! grep -q "/opt/ros/humble/setup.bash" /home/*/.bashrc 2>/dev/null; then
   for bashrc in /home/*/.bashrc; do
