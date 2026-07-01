@@ -1,3 +1,4 @@
 config/*.local.ps1
 downloads/
 work/
+cache/

@@ -10,6 +10,7 @@ $TortoiseBotFlashDefaults = @{
   HostName     = "tortoisebot"
   Username     = "tortoisebot"
   UserPassword = "raspberry"
-  RepoUrl      = "https://github.com/rigbetellabs/tortoisebot.git"
+  RepoUrl      = "https://github.com/KarthiAru/tortoisebot.git"
   RepoBranch   = "mcap-logging"
+  # CacheDir = "C:\tortoisebot-cache"
 }

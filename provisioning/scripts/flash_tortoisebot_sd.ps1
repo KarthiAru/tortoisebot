@@ -20,16 +20,27 @@ param(
   [string]$HostName = "tortoisebot",
   [string]$Username = "tortoisebot",
   [string]$UserPassword = "raspberry",
-  [string]$RepoUrl = "https://github.com/rigbetellabs/tortoisebot.git",
+  [string]$RepoUrl = "https://github.com/KarthiAru/tortoisebot.git",
   [string]$RepoBranch = "mcap-logging",
   [string]$ImageUrl = "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz",
-  [string]$WorkDir = "$PSScriptRoot\..\work",
-  [string]$LocalConfigPath = "$PSScriptRoot\..\config\tortoisebot-flash.local.ps1",
+  [string]$CacheDir,
+  [Alias("Config")]
+  [string]$LocalConfigPath,
+  [switch]$ForceDownload,
   [switch]$Force
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$ProvisioningDir = Split-Path -Parent $ScriptDir
+if ([string]::IsNullOrWhiteSpace($CacheDir)) {
+  $CacheDir = Join-Path $ProvisioningDir "cache"
+}
+if ([string]::IsNullOrWhiteSpace($LocalConfigPath)) {
+  $LocalConfigPath = Join-Path $ProvisioningDir "config\tortoisebot-flash.local.ps1"
+}
 
 function Write-Info([string]$Message) {
   Write-Host "==> $Message" -ForegroundColor Cyan
@@ -113,6 +124,10 @@ function Get-FileNameFromUrl([string]$Url) {
 }
 
 function Download-Image([string]$Url, [string]$Destination) {
+  if ($ForceDownload -and (Test-Path $Destination)) {
+    Write-Info "Removing cached download: $Destination"
+    Remove-Item -Force -Path $Destination
+  }
   if (Test-Path $Destination) {
     Write-Info "Using existing download: $Destination"
     return
@@ -123,6 +138,10 @@ function Download-Image([string]$Url, [string]$Destination) {
 }
 
 function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
+  if ($ForceDownload -and (Test-Path $ImgPath)) {
+    Write-Info "Removing cached expanded image: $ImgPath"
+    Remove-Item -Force -Path $ImgPath
+  }
   if (Test-Path $ImgPath) {
     Write-Info "Using existing expanded image: $ImgPath"
     return
@@ -238,10 +257,10 @@ if ([string]::IsNullOrWhiteSpace($WifiSsid) -or [string]::IsNullOrWhiteSpace($Wi
   throw "Pass -WifiSsid and -WifiPassword, or create provisioning/config/tortoisebot-flash.local.ps1."
 }
 
-New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+New-Item -ItemType Directory -Force -Path $CacheDir | Out-Null
 $imageName = Get-FileNameFromUrl $ImageUrl
-$xzPath = Join-Path $WorkDir $imageName
-$imgPath = Join-Path $WorkDir ($imageName -replace '\.xz$', '')
+$xzPath = Join-Path $CacheDir $imageName
+$imgPath = Join-Path $CacheDir ($imageName -replace '\.xz$', '')
 
 Download-Image -Url $ImageUrl -Destination $xzPath
 Expand-XzImage -XzPath $xzPath -ImgPath $imgPath
@@ -250,7 +269,7 @@ Write-RawImage -ImgPath $imgPath -TargetDiskNumber $TargetDiskNumber
 $bootRoot = Wait-SystemBootVolume -TargetDiskNumber $TargetDiskNumber
 Write-Info "Writing cloud-init files to $bootRoot"
 
-$templateDir = Join-Path $PSScriptRoot "..\cloud-init"
+$templateDir = Join-Path $ProvisioningDir "cloud-init"
 $values = @{
   HOSTNAME      = $HostName
   USERNAME      = $Username
