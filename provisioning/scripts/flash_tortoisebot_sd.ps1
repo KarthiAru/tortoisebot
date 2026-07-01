@@ -24,6 +24,7 @@ param(
   [string]$RepoBranch = "mcap-logging",
   [string]$ImageUrl = "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz",
   [string]$CacheDir,
+  [string[]]$BlockedDriveLetters = @("C", "D"),
   [Alias("Config")]
   [string]$LocalConfigPath,
   [switch]$ForceDownload,
@@ -81,10 +82,77 @@ function Normalize-DriveLetter([string]$Letter) {
 
 function Resolve-DiskNumberFromDriveLetter([string]$Letter) {
   $normalized = Normalize-DriveLetter $Letter
-  $partition = Get-Partition -DriveLetter $normalized -ErrorAction Stop | Select-Object -First 1
-  return [int]$partition.DiskNumber
+  $blocked = @($BlockedDriveLetters | ForEach-Object { Normalize-DriveLetter $_ })
+  if ($blocked -contains $normalized) {
+    throw "Drive ${normalized}: is blocked for safety. This flasher will not target blocked drives: $($blocked -join ', ')."
+  }
+  $partitions = @(Get-Partition -DriveLetter $normalized -ErrorAction Stop)
+  if ($partitions.Count -ne 1) {
+    throw "Drive ${normalized}: matched $($partitions.Count) partitions; refusing to guess. Use -DiskNumber only after verifying with -ListDisks."
+  }
+  return [int]$partitions[0].DiskNumber
 }
 
+
+function Get-PartitionProperty([object]$Partition, [string]$Name) {
+  $property = $Partition.PSObject.Properties[$Name]
+  if ($property) { return $property.Value }
+  return $null
+}
+
+function Show-TargetDiskDetails([int]$TargetDiskNumber) {
+  $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
+  Write-Host "Selected target disk:" -ForegroundColor Yellow
+  $disk | Select-Object Number, FriendlyName, SerialNumber, BusType, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly | Format-List | Out-Host
+
+  $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
+  if ($partitions.Count -gt 0) {
+    Write-Host "Partitions on selected disk:" -ForegroundColor Yellow
+    $partitions |
+      Sort-Object PartitionNumber |
+      Select-Object DiskNumber, PartitionNumber, DriveLetter, Type, Size, IsActive, IsBoot, IsSystem |
+      Format-Table -AutoSize | Out-Host
+
+    $volumes = @($partitions | Get-Volume -ErrorAction SilentlyContinue)
+    if ($volumes.Count -gt 0) {
+      Write-Host "Volumes on selected disk:" -ForegroundColor Yellow
+      $volumes |
+        Select-Object DriveLetter, FileSystemLabel, FileSystem, SizeRemaining, Size |
+        Format-Table -AutoSize | Out-Host
+    }
+  }
+}
+
+function Assert-TargetDiskSafe([int]$TargetDiskNumber) {
+  $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
+  $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
+  $blocked = @($BlockedDriveLetters | ForEach-Object { Normalize-DriveLetter $_ })
+  $allowedBus = @("USB", "SD", "MMC")
+
+  Show-TargetDiskDetails -TargetDiskNumber $TargetDiskNumber
+
+  if (-not $Force -and $allowedBus -notcontains $disk.BusType.ToString()) {
+    throw "Disk $TargetDiskNumber bus type is $($disk.BusType), not USB/SD/MMC. Pass -Force only if you are absolutely sure."
+  }
+
+  $blockedPartitions = @($partitions | Where-Object { $_.DriveLetter -and $blocked -contains (Normalize-DriveLetter ([string]$_.DriveLetter)) })
+  if ($blockedPartitions.Count -gt 0) {
+    throw "Disk $TargetDiskNumber contains blocked drive letter(s): $((@($blockedPartitions | ForEach-Object { $_.DriveLetter }) | Sort-Object -Unique) -join ', '). Refusing to flash."
+  }
+
+  $systemPartitions = @($partitions | Where-Object {
+    $_.DriveLetter -eq "C" -or
+    (Get-PartitionProperty $_ "IsBoot") -eq $true -or
+    (Get-PartitionProperty $_ "IsSystem") -eq $true
+  })
+  if ($systemPartitions.Count -gt 0) {
+    throw "Disk $TargetDiskNumber appears to contain a Windows boot/system partition. Refusing to flash."
+  }
+
+  if (-not $Force -and $disk.Size -gt 512GB) {
+    throw "Disk $TargetDiskNumber is larger than 512 GB. Refusing to flash without -Force."
+  }
+}
 function Select-TargetDiskNumber {
   if (-not [string]::IsNullOrWhiteSpace($DriveLetter)) {
     $resolved = Resolve-DiskNumberFromDriveLetter $DriveLetter
@@ -186,16 +254,13 @@ function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
 }
 function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
-  $allowedBus = @("USB", "SD", "MMC")
-  if (-not $Force -and $allowedBus -notcontains $disk.BusType.ToString()) {
-    throw "Disk $TargetDiskNumber bus type is $($disk.BusType), not USB/SD/MMC. Pass -Force only if you are absolutely sure."
-  }
 
   Write-Host ""
-  Write-Host "About to overwrite disk ${TargetDiskNumber}:" -ForegroundColor Yellow
-  $disk | Select-Object Number, FriendlyName, BusType, Size, PartitionStyle | Format-List
-  $confirmation = Read-Host "Type FLASH $TargetDiskNumber to continue"
-  if ($confirmation -ne "FLASH $TargetDiskNumber") {
+  Write-Host "About to overwrite the selected physical disk with image:" -ForegroundColor Yellow
+  Write-Host "  Disk:  $TargetDiskNumber"
+  Write-Host "  Image: $ImgPath"
+  $confirmation = Read-Host "Type FLASH DISK $TargetDiskNumber to continue"
+  if ($confirmation -ne "FLASH DISK $TargetDiskNumber") {
     throw "Confirmation failed; not writing the SD card."
   }
 
@@ -237,7 +302,8 @@ function Wait-SystemBootVolume([int]$TargetDiskNumber) {
     if ($boot) {
       if (-not $boot.DriveLetter) {
         $used = (Get-Volume | Where-Object DriveLetter | Select-Object -ExpandProperty DriveLetter)
-        $letter = [char[]]([char]'D'..[char]'Z') | Where-Object { $used -notcontains $_ } | Select-Object -First 1
+        $blocked = @($BlockedDriveLetters | ForEach-Object { Normalize-DriveLetter $_ })
+        $letter = [char[]]([char]'D'..[char]'Z') | Where-Object { $used -notcontains $_ -and $blocked -notcontains ([string]$_) } | Select-Object -First 1
         if (-not $letter) { throw "No free drive letter available for system-boot." }
         $partition = Get-Partition -DiskNumber $TargetDiskNumber | Where-Object { $_.Guid -eq $boot.UniqueId -or $_.Type -eq "System" } | Select-Object -First 1
         if ($partition) { Set-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -NewDriveLetter $letter }
@@ -272,6 +338,7 @@ if ($ListDisks) {
 }
 
 $TargetDiskNumber = [int](Select-TargetDiskNumber)
+Assert-TargetDiskSafe -TargetDiskNumber $TargetDiskNumber
 if ([string]::IsNullOrWhiteSpace($WifiSsid) -or [string]::IsNullOrWhiteSpace($WifiPassword)) {
   throw "Pass -WifiSsid and -WifiPassword, or create provisioning/config/tortoisebot-flash.local.ps1."
 }

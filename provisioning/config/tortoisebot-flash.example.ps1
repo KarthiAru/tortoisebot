@@ -13,4 +13,5 @@ $TortoiseBotFlashDefaults = @{
   RepoUrl      = "https://github.com/KarthiAru/tortoisebot.git"
   RepoBranch   = "mcap-logging"
   # CacheDir = "C:\tortoisebot-cache"
+  BlockedDriveLetters = @("C", "D")
 }

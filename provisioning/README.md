@@ -64,9 +64,11 @@ The Ubuntu `.img.xz` and expanded `.img` are cached in `%LOCALAPPDATA%\TortoiseB
 - `meta-data`
 - `network-config`
 
-The write step is destructive and still requires typing `FLASH <disk number>` before
+The write step is destructive and still requires typing `FLASH DISK <disk number>` before
 anything is written. Drive letters are easier to recognize, but raw image writing
 happens to the whole physical disk underneath that drive letter.
+
+By default, `BlockedDriveLetters = @("C", "D")`, so the script refuses to target any disk containing either of those drive letters and will not assign them while mounting `system-boot`.
 
 ## First Boot
 
