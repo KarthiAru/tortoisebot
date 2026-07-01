@@ -10,7 +10,7 @@ users:
   - default
   - name: __USERNAME__
     gecos: TortoiseBot Operator
-    groups: adm,sudo,dialout,video,plugdev
+    groups: sudo
     shell: /bin/bash
     lock_passwd: false
     sudo: ALL=(ALL) NOPASSWD:ALL
@@ -31,19 +31,33 @@ write_files:
     permissions: '0755'
     content: |
       #!/usr/bin/env bash
-      set -euxo pipefail
+      set -uxo pipefail
+      exec >/var/log/tortoisebot-bootstrap-login.log 2>&1
 
       USERNAME="__USERNAME__"
       PASSWORD="__PASSWORD__"
       SSH_AUTHORIZED_KEY="__SSH_AUTHORIZED_KEY__"
-      GROUPS="adm,sudo,dialout,video,plugdev"
+      EXTRA_GROUPS="adm sudo dialout video plugdev"
+
+      install -d /etc/ssh/sshd_config.d
+      printf '%s\n' \
+        'PasswordAuthentication yes' \
+        'KbdInteractiveAuthentication yes' \
+        'PubkeyAuthentication yes' \
+        >/etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
+      trap 'systemctl restart ssh || systemctl restart sshd || true' EXIT
 
       if ! id "${USERNAME}" >/dev/null 2>&1; then
-        useradd -m -s /bin/bash -G "${GROUPS}" "${USERNAME}"
+        useradd -m -s /bin/bash "${USERNAME}"
       else
-        usermod -aG "${GROUPS}" "${USERNAME}"
         usermod -s /bin/bash "${USERNAME}"
       fi
+
+      for group_name in ${EXTRA_GROUPS}; do
+        if getent group "${group_name}" >/dev/null 2>&1; then
+          usermod -aG "${group_name}" "${USERNAME}"
+        fi
+      done
 
       echo "${USERNAME}:${PASSWORD}" | chpasswd
       passwd -u "${USERNAME}" || true
@@ -54,15 +68,6 @@ write_files:
         chown "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.ssh/authorized_keys"
         chmod 0600 "/home/${USERNAME}/.ssh/authorized_keys"
       fi
-
-      install -d /etc/ssh/sshd_config.d
-      printf '%s\n' \
-        'PasswordAuthentication yes' \
-        'KbdInteractiveAuthentication yes' \
-        'PubkeyAuthentication yes' \
-        >/etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
-
-      systemctl restart ssh || systemctl restart sshd || true
   - path: /usr/local/sbin/tortoisebot-install.sh
     owner: root:root
     permissions: '0755'
