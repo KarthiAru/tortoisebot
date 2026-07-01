@@ -337,6 +337,32 @@ function Open-PhysicalDriveForWrite([int]$TargetDiskNumber) {
 
   return $handle
 }
+function Refresh-PhysicalDriveLayout([int]$TargetDiskNumber) {
+  Initialize-NativeVolumeApi
+  $path = "\\.\PhysicalDrive$TargetDiskNumber"
+  $genericRead = [uint32]2147483648
+  $shareReadWrite = [uint32]0x00000003
+  $openExisting = [uint32]3
+  $fileAttributeNormal = [uint32]0x00000080
+  $ioctlDiskUpdateProperties = [uint32]0x00070050
+
+  $handle = [NativeVolume]::CreateFile($path, $genericRead, $shareReadWrite, [IntPtr]::Zero, $openExisting, $fileAttributeNormal, [IntPtr]::Zero)
+  if ($handle.IsInvalid) {
+    Write-Verbose "Could not open $path to refresh the drive layout."
+    return
+  }
+
+  try {
+    Invoke-VolumeIoControl -Handle $handle -ControlCode $ioctlDiskUpdateProperties -Description "Refresh drive layout on $path"
+  }
+  catch {
+    Write-Verbose "$($_.Exception.Message) Continuing with host storage cache refresh."
+  }
+  finally {
+    $handle.Dispose()
+  }
+}
+
 function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
   if ($partitions.Count -eq 0) { return @() }
@@ -472,6 +498,9 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       if ($diskWasSetOffline) {
         Set-Disk -Number $TargetDiskNumber -IsOffline $false -ErrorAction SilentlyContinue
       }
+      if ($writeCompleted) {
+        Refresh-PhysicalDriveLayout -TargetDiskNumber $TargetDiskNumber
+      }
       Update-HostStorageCache
       if (-not $writeCompleted) {
         Restore-ReadablePartitionDriveLetter -TargetDiskNumber $TargetDiskNumber -PreferredDriveLetter $preferredDriveLetter
@@ -485,6 +514,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
 
 function Wait-SystemBootVolume([int]$TargetDiskNumber) {
   Write-Info "Mounting system-boot partition"
+  Refresh-PhysicalDriveLayout -TargetDiskNumber $TargetDiskNumber
   $preferredDriveLetter = if (-not [string]::IsNullOrWhiteSpace($DriveLetter)) { Normalize-DriveLetter $DriveLetter } else { $null }
 
   for ($i = 0; $i -lt 60; $i++) {
