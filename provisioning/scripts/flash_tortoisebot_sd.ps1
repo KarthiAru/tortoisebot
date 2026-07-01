@@ -36,7 +36,8 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $ProvisioningDir = Split-Path -Parent $ScriptDir
 if ([string]::IsNullOrWhiteSpace($CacheDir)) {
-  $CacheDir = Join-Path $ProvisioningDir "cache"
+  $cacheRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
+  $CacheDir = Join-Path $cacheRoot "TortoiseBot\cache"
 }
 if ([string]::IsNullOrWhiteSpace($LocalConfigPath)) {
   $LocalConfigPath = Join-Path $ProvisioningDir "config\tortoisebot-flash.local.ps1"
@@ -137,6 +138,16 @@ function Download-Image([string]$Url, [string]$Destination) {
   curl.exe -L --fail --retry 3 -o $Destination $Url
 }
 
+function ConvertTo-WslPath([string]$Path) {
+  $full = [IO.Path]::GetFullPath($Path)
+  if ($full -match "^([A-Za-z]):\\(.*)$") {
+    $drive = $Matches[1].ToLowerInvariant()
+    $rest = $Matches[2].Replace("\", "/")
+    return "/mnt/$drive/$rest"
+  }
+  throw "WSL xz fallback requires CacheDir on a local Windows drive. Got $Path"
+}
+
 function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
   if ($ForceDownload -and (Test-Path $ImgPath)) {
     Write-Info "Removing cached expanded image: $ImgPath"
@@ -148,23 +159,31 @@ function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
   }
 
   Write-Info "Expanding image to $ImgPath"
-  $tar = Get-Command tar.exe -ErrorAction SilentlyContinue
-  if ($tar) {
-    cmd.exe /c "tar -xOf `"$XzPath`" > `"$ImgPath`""
-    if ($LASTEXITCODE -ne 0) { throw "tar failed to expand $XzPath" }
-    return
-  }
-
   $sevenZip = Get-Command 7z.exe -ErrorAction SilentlyContinue
   if ($sevenZip) {
-    cmd.exe /c "7z x -so `"$XzPath`" > `"$ImgPath`""
+    cmd.exe /d /c "`"$($sevenZip.Source)`" x -so `"$XzPath`" > `"$ImgPath`""
     if ($LASTEXITCODE -ne 0) { throw "7z failed to expand $XzPath" }
     return
   }
 
-  throw "Need tar.exe or 7z.exe to expand .xz images. Windows 10/11 usually includes tar.exe."
-}
+  $xz = Get-Command xz.exe -ErrorAction SilentlyContinue
+  if ($xz) {
+    cmd.exe /d /c "`"$($xz.Source)`" -dc `"$XzPath`" > `"$ImgPath`""
+    if ($LASTEXITCODE -ne 0) { throw "xz failed to expand $XzPath" }
+    return
+  }
 
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if ($wsl) {
+    $wslXz = ConvertTo-WslPath $XzPath
+    $wslImg = ConvertTo-WslPath $ImgPath
+    & $wsl.Source sh -lc "xz -dc `"$wslXz`" > `"$wslImg`""
+    if ($LASTEXITCODE -ne 0) { throw "WSL xz failed to expand $XzPath" }
+    return
+  }
+
+  throw "Need 7z.exe, xz.exe, or WSL with xz to expand raw .img.xz images."
+}
 function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
   $allowedBus = @("USB", "SD", "MMC")

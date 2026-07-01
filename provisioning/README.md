@@ -53,7 +53,7 @@ The script downloads the official Ubuntu 22.04.5 Raspberry Pi arm64 image,
 expands it, writes it to the selected physical disk, then writes these files to
 `system-boot`:
 
-The Ubuntu `.img.xz` and expanded `.img` are cached in `provisioning\cache` by default, so later runs reuse the same OS image instead of downloading and expanding it again. Use `-ForceDownload` when you want to refresh the cached files:
+The Ubuntu `.img.xz` and expanded `.img` are cached in `%LOCALAPPDATA%\TortoiseBot\cache` by default, so later runs reuse the same OS image instead of downloading and expanding it again. Pass `-CacheDir` to use another local Windows folder. Use `-ForceDownload` when you want to refresh the cached files:
 
 ```powershell
 .\provisioning\scripts\flash_tortoisebot_sd.ps1 -ForceDownload
