@@ -15,7 +15,7 @@ The repeatable flow is:
 
 Run PowerShell as Administrator from this repo checkout.
 
-List disks first:
+List visible drive letters and physical disks first:
 
 ```powershell
 .\provisioning\scripts\flash_tortoisebot_sd.ps1 -ListDisks
@@ -29,7 +29,7 @@ Copy-Item .\provisioning\config\tortoisebot-flash.example.ps1 `
 notepad .\provisioning\config\tortoisebot-flash.local.ps1
 ```
 
-Fill in `DiskNumber`, `WifiSsid`, `WifiPassword`, `RepoUrl`, and `RepoBranch`.
+Fill in `DriveLetter`, `WifiSsid`, `WifiPassword`, `RepoUrl`, and `RepoBranch`. Use `DiskNumber` only when the card has no mounted drive letter.
 The `.local.ps1` file is ignored by Git so Wi-Fi credentials stay private.
 
 Flash and seed the card:
@@ -42,7 +42,7 @@ Or pass values directly:
 
 ```powershell
 .\provisioning\scripts\flash_tortoisebot_sd.ps1 `
-  -DiskNumber 3 `
+  -DriveLetter D `
   -WifiSsid "YOUR_WIFI_SSID" `
   -WifiPassword "YOUR_WIFI_PASSWORD" `
   -RepoUrl "https://github.com/rigbetellabs/tortoisebot.git" `
@@ -57,8 +57,9 @@ expands it, writes it to the selected physical disk, then writes these files to
 - `meta-data`
 - `network-config`
 
-The write step is destructive and requires typing `FLASH <disk number>` before
-anything is written.
+The write step is destructive and still requires typing `FLASH <disk number>` before
+anything is written. Drive letters are easier to recognize, but raw image writing
+happens to the whole physical disk underneath that drive letter.
 
 ## First Boot
 

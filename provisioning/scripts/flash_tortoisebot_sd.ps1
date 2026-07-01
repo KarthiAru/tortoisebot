@@ -14,6 +14,7 @@
 param(
   [switch]$ListDisks,
   [int]$DiskNumber = -1,
+  [string]$DriveLetter,
   [string]$WifiSsid,
   [string]$WifiPassword,
   [string]$HostName = "tortoisebot",
@@ -43,10 +44,56 @@ function Assert-Admin {
 }
 
 function Show-CandidateDisks {
+  Write-Host "Drive-letter volumes:" -ForegroundColor Cyan
+  Get-Volume |
+    Where-Object DriveLetter |
+    Sort-Object DriveLetter |
+    Select-Object DriveLetter, FileSystemLabel, FileSystem, SizeRemaining, Size |
+    Format-Table -AutoSize
+
+  Write-Host "Physical disks:" -ForegroundColor Cyan
   Get-Disk |
     Sort-Object Number |
     Select-Object Number, FriendlyName, BusType, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly |
     Format-Table -AutoSize
+}
+
+function Normalize-DriveLetter([string]$Letter) {
+  if ([string]::IsNullOrWhiteSpace($Letter)) { return $null }
+  $normalized = $Letter.Trim().TrimEnd(':', '\').ToUpperInvariant()
+  if ($normalized.Length -ne 1 -or $normalized -notmatch '^[A-Z]$') {
+    throw "Drive letter must look like D or D:. Got '$Letter'."
+  }
+  return $normalized
+}
+
+function Resolve-DiskNumberFromDriveLetter([string]$Letter) {
+  $normalized = Normalize-DriveLetter $Letter
+  $partition = Get-Partition -DriveLetter $normalized -ErrorAction Stop
+  return [int]$partition.DiskNumber
+}
+
+function Select-TargetDiskNumber {
+  if (-not [string]::IsNullOrWhiteSpace($DriveLetter)) {
+    $resolved = Resolve-DiskNumberFromDriveLetter $DriveLetter
+    Write-Info "Drive $((Normalize-DriveLetter $DriveLetter)): maps to physical disk $resolved"
+    return $resolved
+  }
+
+  if ($DiskNumber -ge 0) {
+    return $DiskNumber
+  }
+
+  Show-CandidateDisks
+  Write-Host ""
+  $selection = Read-Host "Enter the SD card drive letter, like D, or physical disk number"
+  if ($selection -match '^\s*[A-Za-z]:?\s*$') {
+    return Resolve-DiskNumberFromDriveLetter $selection
+  }
+  if ($selection -match '^\s*\d+\s*$') {
+    return [int]$selection
+  }
+  throw "Could not understand '$selection'. Enter a drive letter like D or a disk number like 3."
 }
 
 function Load-LocalDefaults {
@@ -186,10 +233,7 @@ if ($ListDisks) {
   return
 }
 
-if ($DiskNumber -lt 0) {
-  Show-CandidateDisks
-  throw "Pass -DiskNumber <N> for the microSD card."
-}
+$TargetDiskNumber = Select-TargetDiskNumber
 if ([string]::IsNullOrWhiteSpace($WifiSsid) -or [string]::IsNullOrWhiteSpace($WifiPassword)) {
   throw "Pass -WifiSsid and -WifiPassword, or create provisioning/config/tortoisebot-flash.local.ps1."
 }
@@ -201,9 +245,9 @@ $imgPath = Join-Path $WorkDir ($imageName -replace '\.xz$', '')
 
 Download-Image -Url $ImageUrl -Destination $xzPath
 Expand-XzImage -XzPath $xzPath -ImgPath $imgPath
-Write-RawImage -ImgPath $imgPath -TargetDiskNumber $DiskNumber
+Write-RawImage -ImgPath $imgPath -TargetDiskNumber $TargetDiskNumber
 
-$bootRoot = Wait-SystemBootVolume -TargetDiskNumber $DiskNumber
+$bootRoot = Wait-SystemBootVolume -TargetDiskNumber $TargetDiskNumber
 Write-Info "Writing cloud-init files to $bootRoot"
 
 $templateDir = Join-Path $PSScriptRoot "..\cloud-init"

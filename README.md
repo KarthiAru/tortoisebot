@@ -395,8 +395,9 @@ notepad .\provisioning\config\tortoisebot-flash.local.ps1
 .\provisioning\scripts\flash_tortoisebot_sd.ps1
 ```
 
-The local config file stores repeatable defaults such as SD-card disk number,
-Wi-Fi SSID/password, hostname, repo URL, and branch. It is ignored by Git so
+The local config file stores repeatable defaults such as SD-card drive letter,
+Wi-Fi SSID/password, hostname, repo URL, and branch. If neither drive letter nor
+disk number is configured, the script prompts interactively. It is ignored by Git so
 secrets stay out of commits.
 
 On first boot the Pi uses cloud-init to join Wi-Fi, install ROS 2 Humble and the
