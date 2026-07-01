@@ -60,7 +60,26 @@ write_files:
         'KbdInteractiveAuthentication yes' \
         'PubkeyAuthentication yes' \
         >/etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
-      trap 'systemctl restart ssh || systemctl restart sshd || true' EXIT
+
+      SSHD_CONFIG=/etc/ssh/sshd_config
+      if [[ -f "${SSHD_CONFIG}" ]]; then
+        cp -n "${SSHD_CONFIG}" "${SSHD_CONFIG}.tortoisebot.bak" || true
+        sed -i -E \
+          -e '/^[#[:space:]]*PasswordAuthentication[[:space:]]+/d' \
+          -e '/^[#[:space:]]*KbdInteractiveAuthentication[[:space:]]+/d' \
+          -e '/^[#[:space:]]*ChallengeResponseAuthentication[[:space:]]+/d' \
+          -e '/^[#[:space:]]*PubkeyAuthentication[[:space:]]+/d' \
+          "${SSHD_CONFIG}"
+        printf '%s\n' \
+          '' \
+          '# TortoiseBot provisioning' \
+          'PasswordAuthentication yes' \
+          'KbdInteractiveAuthentication yes' \
+          'ChallengeResponseAuthentication yes' \
+          'PubkeyAuthentication yes' \
+          >>"${SSHD_CONFIG}"
+      fi
+      trap 'sshd -t && (systemctl restart ssh || systemctl restart sshd || true)' EXIT
 
       if ! id "${USERNAME}" >/dev/null 2>&1; then
         useradd -m -s /bin/bash "${USERNAME}"
@@ -76,6 +95,10 @@ write_files:
 
       echo "${USERNAME}:${PASSWORD}" | chpasswd
       passwd -u "${USERNAME}" || true
+
+      if command -v sshd >/dev/null 2>&1; then
+        sshd -T | grep -E 'passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication|pubkeyauthentication|authorizedkeysfile' || true
+      fi
 
       install -d -m 0700 -o "${USERNAME}" -g "${USERNAME}" "/home/${USERNAME}/.ssh"
       if [[ -n "${SSH_AUTHORIZED_KEY}" ]]; then
