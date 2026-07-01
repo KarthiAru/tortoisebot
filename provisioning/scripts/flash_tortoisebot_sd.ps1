@@ -103,25 +103,12 @@ function Get-PartitionProperty([object]$Partition, [string]$Name) {
 
 function Show-TargetDiskDetails([int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
-  Write-Host "Selected target disk:" -ForegroundColor Yellow
-  $disk | Select-Object Number, FriendlyName, SerialNumber, BusType, @{Name="SizeGB"; Expression={[math]::Round($_.Size / 1GB, 2)}}, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly | Format-List | Out-Host
-
+  $diskSizeGB = [math]::Round($disk.Size / 1GB, 2)
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
-  if ($partitions.Count -gt 0) {
-    Write-Host "Partitions on selected disk:" -ForegroundColor Yellow
-    $partitions |
-      Sort-Object PartitionNumber |
-      Select-Object DiskNumber, PartitionNumber, DriveLetter, Type, Size, IsActive, IsBoot, IsSystem |
-      Format-Table -AutoSize | Out-Host
+  $driveLetters = @($partitions | Where-Object DriveLetter | ForEach-Object { "$($_.DriveLetter):" } | Sort-Object -Unique)
+  $letterText = if ($driveLetters.Count -gt 0) { $driveLetters -join ", " } else { "none" }
 
-    $volumes = @($partitions | Get-Volume -ErrorAction SilentlyContinue)
-    if ($volumes.Count -gt 0) {
-      Write-Host "Volumes on selected disk:" -ForegroundColor Yellow
-      $volumes |
-        Select-Object DriveLetter, FileSystemLabel, FileSystem, SizeRemaining, Size |
-        Format-Table -AutoSize | Out-Host
-    }
-  }
+  Write-Host "Selected target: Disk $TargetDiskNumber ($($disk.FriendlyName), $($disk.BusType), $diskSizeGB GB, drive letters: $letterText)" -ForegroundColor Yellow
 }
 
 function Assert-TargetDiskSafe([int]$TargetDiskNumber) {
@@ -307,7 +294,7 @@ function Lock-VolumeByDriveLetter([string]$DriveLetter) {
   $fsctlLockVolume = [uint32]0x00090018
   $fsctlDismountVolume = [uint32]0x00090020
 
-  Write-Info "Locking volume ${letter}:"
+  Write-Info "Preparing ${letter}:"
   $handle = [NativeVolume]::CreateFile($path, $genericReadWrite, $shareReadWrite, [IntPtr]::Zero, $openExisting, 0, [IntPtr]::Zero)
   if ($handle.IsInvalid) {
     $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -344,7 +331,7 @@ function Open-PhysicalDriveForWrite([int]$TargetDiskNumber) {
     Invoke-VolumeIoControl -Handle $handle -ControlCode $fsctlAllowExtendedDasdIo -Description "Allow extended DASD I/O on $path"
   }
   catch {
-    Write-Warning "$($_.Exception.Message) Continuing; some removable readers do not support this control code."
+    Write-Verbose "$($_.Exception.Message) Continuing without extended DASD I/O."
   }
 
   return $handle
@@ -354,7 +341,7 @@ function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   if ($partitions.Count -eq 0) { return @() }
 
   $locks = @()
-  Write-Info "Locking/removing drive letters on disk $TargetDiskNumber"
+  Write-Info "Preparing SD card volumes"
   foreach ($partition in $partitions) {
     $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
     foreach ($volume in $volumes) {
@@ -365,13 +352,12 @@ function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
 
     $accessPaths = @($partition.AccessPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     foreach ($accessPath in $accessPaths) {
-      Write-Info "Removing access path $accessPath from disk $TargetDiskNumber partition $($partition.PartitionNumber)"
       Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath $accessPath -ErrorAction SilentlyContinue
     }
 
     foreach ($volume in $volumes) {
       if ($volume.DriveLetter) {
-        cmd.exe /d /c "mountvol $($volume.DriveLetter): /p" | Out-Null
+        & "$env:SystemRoot\System32\mountvol.exe" "$($volume.DriveLetter):" "/p" 2>$null | Out-Null
       }
     }
   }
@@ -446,7 +432,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       if ($_.Exception.Message -notmatch "Not Supported|Removable media cannot be set to offline") {
         throw
       }
-      Write-Warning "Windows cannot set removable media offline; locking/removing volumes before raw write."
+      Write-Info "Using removable-media write path"
     }
 
     if (-not $diskWasSetOffline) {
