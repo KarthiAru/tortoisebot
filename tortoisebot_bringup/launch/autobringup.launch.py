@@ -16,11 +16,20 @@ from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 
-def real_robot_and_recording_enabled(use_sim_time, record_mcap):
+def real_robot_and_enabled(use_sim_time, enabled):
     return PythonExpression([
         "'true' if '", use_sim_time, "'.lower() == 'false' and '",
-        record_mcap,
+        enabled,
         "'.lower() == 'true' else 'false'",
+    ])
+
+
+def launch_rviz_when(use_sim_time, launch_rviz, exploration, expected_exploration):
+    return PythonExpression([
+        "'true' if '", use_sim_time, "'.lower() == 'false' and '",
+        launch_rviz, "'.lower() == 'true' and '",
+        exploration, "'.lower() == '", expected_exploration,
+        "' else 'false'",
     ])
 
 
@@ -45,6 +54,9 @@ def generate_launch_description():
     map_file = LaunchConfiguration('map_file')
     camera_device = LaunchConfiguration('camera_device')
     record_mcap = LaunchConfiguration('record_mcap')
+    launch_rviz = LaunchConfiguration('launch_rviz')
+    enable_imu = LaunchConfiguration('enable_imu')
+    enable_camera = LaunchConfiguration('enable_camera')
     bag_dir = LaunchConfiguration('bag_dir')
     bag_name = LaunchConfiguration('bag_name')
 
@@ -80,7 +92,7 @@ def generate_launch_description():
         executable='imu_node.py',
         name='imu_publisher',
         output='screen',
-        condition=UnlessCondition(use_sim_time),
+        condition=IfCondition(real_robot_and_enabled(use_sim_time, enable_imu)),
     )
 
     motors = Node(
@@ -103,7 +115,7 @@ def generate_launch_description():
             'output_encoding': 'rgb8',
             'camera_frame_id': 'camera_link',
         }],
-        condition=UnlessCondition(use_sim_time),
+        condition=IfCondition(real_robot_and_enabled(use_sim_time, enable_camera)),
     )
 
     recorder = IncludeLaunchDescription(
@@ -113,7 +125,7 @@ def generate_launch_description():
             'bag_dir': bag_dir,
             'bag_name': bag_name,
         }.items(),
-        condition=IfCondition(real_robot_and_recording_enabled(use_sim_time, record_mcap)),
+        condition=IfCondition(real_robot_and_enabled(use_sim_time, record_mcap)),
     )
 
     ekf = Node(
@@ -188,7 +200,7 @@ def generate_launch_description():
                 'rvizconfig': nav_rviz_config,
                 'use_sim_time': use_sim_time,
             }.items(),
-            condition=IfCondition(exploration),
+            condition=IfCondition(launch_rviz_when(use_sim_time, launch_rviz, exploration, 'true')),
         )],
     )
 
@@ -201,7 +213,7 @@ def generate_launch_description():
                 'rvizconfig': sim_rviz_config,
                 'use_sim_time': use_sim_time,
             }.items(),
-            condition=UnlessCondition(exploration),
+            condition=IfCondition(launch_rviz_when(use_sim_time, launch_rviz, exploration, 'false')),
         )],
     )
 
@@ -218,6 +230,12 @@ def generate_launch_description():
                               description='V4L2 camera device path on the robot'),
         DeclareLaunchArgument('record_mcap', default_value='False',
                               description='Record hardware topics to MCAP when use_sim_time=False'),
+        DeclareLaunchArgument('launch_rviz', default_value='False',
+                              description='Launch RViz on the robot. Usually false for headless Pi.'),
+        DeclareLaunchArgument('enable_imu', default_value='True',
+                              description='Start the BNO055 IMU node when use_sim_time=False'),
+        DeclareLaunchArgument('enable_camera', default_value='True',
+                              description='Start the V4L2 camera node when use_sim_time=False'),
         DeclareLaunchArgument('bag_dir', default_value=os.path.expanduser('~/tortoisebot_mcap'),
                               description='Directory where MCAP rosbag folders are written'),
         DeclareLaunchArgument('bag_name', default_value=default_bag_name,

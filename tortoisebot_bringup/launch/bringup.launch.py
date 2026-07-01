@@ -26,6 +26,9 @@ def generate_launch_description():
     map_file = LaunchConfiguration('map_file')
     camera_device = LaunchConfiguration('camera_device')
     record_mcap = LaunchConfiguration('record_mcap')
+    launch_rviz = LaunchConfiguration('launch_rviz')
+    enable_imu = LaunchConfiguration('enable_imu')
+    enable_camera = LaunchConfiguration('enable_camera')
     bag_dir = LaunchConfiguration('bag_dir')
     bag_name = LaunchConfiguration('bag_name')
 
@@ -40,6 +43,12 @@ def generate_launch_description():
                               description='V4L2 camera device path on the robot'),
         DeclareLaunchArgument('record_mcap', default_value='False',
                               description='Record hardware topics to MCAP when use_sim_time=False'),
+        DeclareLaunchArgument('launch_rviz', default_value='False',
+                              description='Launch RViz on the robot. Usually false for headless Pi.'),
+        DeclareLaunchArgument('enable_imu', default_value='True',
+                              description='Start the BNO055 IMU node when use_sim_time=False'),
+        DeclareLaunchArgument('enable_camera', default_value='True',
+                              description='Start the V4L2 camera node when use_sim_time=False'),
         DeclareLaunchArgument('bag_dir', default_value=os.path.expanduser('~/tortoisebot_mcap'),
                               description='Directory where MCAP rosbag folders are written'),
         DeclareLaunchArgument('bag_name', default_value=default_bag_name,
@@ -53,6 +62,9 @@ def generate_launch_description():
                 'map_file': map_file,
                 'camera_device': camera_device,
                 'record_mcap': record_mcap,
+                'launch_rviz': launch_rviz,
+                'enable_imu': enable_imu,
+                'enable_camera': enable_camera,
                 'bag_dir': bag_dir,
                 'bag_name': bag_name,
             }.items(),
