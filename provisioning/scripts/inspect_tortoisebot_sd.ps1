@@ -149,7 +149,7 @@ Show-Check "bootstrap log enabled" ($userData -match "tortoisebot-bootstrap-logi
 Show-Check "password ssh enabled" ($userData -match "PasswordAuthentication yes")
 Show-Check "pubkey ssh enabled" ($userData -match "PubkeyAuthentication yes")
 Show-Check "network-config has Wi-Fi block" ($networkConfig -match "wifis:")
-Show-Check "meta-data has v5 seed" ($metaData -match "manual-ssh-v5")
+Show-Check "meta-data has current manual SSH seed" ($metaData -match "manual-ssh-v[0-9]+")
 
 $keyCount = ([regex]::Matches($userData, "ssh-(ed25519|rsa|ecdsa)\s+[A-Za-z0-9+/=]+")).Count
 Show-Check "user-data contains at least one SSH public key" ($keyCount -gt 0) "$keyCount key(s)"
@@ -160,15 +160,21 @@ else {
   Show-Check "user-data contains local public key" ($userData.Contains($expectedKey)) $PublicKeyPath
 }
 
+$statusLogPath = Join-Path $bootRoot "tortoisebot-cloud-init-status.log"
+if (Test-Path $statusLogPath) {
+  Show-Check "boot-visible cloud-init status log exists" $true $statusLogPath
+  Write-Host ""
+  Write-Host "---- tortoisebot-cloud-init-status.log ----" -ForegroundColor Cyan
+  Get-Content -Path $statusLogPath | Select-Object -Last 80 | Out-Host
+}
+else {
+  Show-Check "boot-visible cloud-init status log exists" $false "not found yet; boot the Pi once, power it off, then inspect again"
+}
+
 Write-Host ""
-Write-Host "If these checks pass but SSH still fails, inspect first-boot logs from the Linux partition:" -ForegroundColor Yellow
-Write-Host "  1. Power off the Raspberry Pi and insert the SD card into this PC."
-Write-Host "  2. In Administrator PowerShell:"
-Write-Host "     wsl --shutdown"
-Write-Host "     wsl --mount \\.\PHYSICALDRIVE$targetDiskNumber --partition 2 --type ext4"
-Write-Host "  3. In WSL:"
-Write-Host "     find /mnt/wsl -maxdepth 4 -type f \( -name cloud-init.log -o -name cloud-init-output.log -o -name tortoisebot-bootstrap-login.log \) -print"
-Write-Host "     sudo cat /mnt/wsl/*/var/log/cloud-init-output.log"
-Write-Host "     sudo cat /mnt/wsl/*/var/log/tortoisebot-bootstrap-login.log"
-Write-Host "  4. Back in Administrator PowerShell:"
-Write-Host "     wsl --unmount \\.\PHYSICALDRIVE$targetDiskNumber"
+Write-Host "Next diagnostic loop:" -ForegroundColor Yellow
+Write-Host "  1. Boot the Raspberry Pi once with this SD card and wait 2-3 minutes after Wi-Fi appears."
+Write-Host "  2. Power it off, put the SD card back in this PC, then rerun this inspector."
+Write-Host "  3. If tortoisebot-cloud-init-status.log exists, cloud-init ran and the log above shows where it stopped."
+Write-Host "  4. If the status log is missing, the Ubuntu image did not consume the system-boot user-data seed."
+Write-Host "Note: WSL could not mount this removable SD reader on your machine, so this script uses the FAT boot partition for logs."

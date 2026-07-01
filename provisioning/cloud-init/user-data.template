@@ -25,6 +25,8 @@ chpasswd:
 package_update: false
 package_upgrade: false
 
+bootcmd:
+  - [ bash, -lc, 'for d in /boot/firmware /boot; do if [ -d "$d" ]; then echo "cloud-init bootcmd $(date -Is)" >> "$d/tortoisebot-cloud-init-status.log"; break; fi; done' ]
 write_files:
   - path: /usr/local/sbin/tortoisebot-bootstrap-login.sh
     owner: root:root
@@ -32,7 +34,20 @@ write_files:
     content: |
       #!/usr/bin/env bash
       set -uxo pipefail
-      exec >/var/log/tortoisebot-bootstrap-login.log 2>&1
+
+      BOOT_STATUS_LOG=""
+      for boot_dir in /boot/firmware /boot; do
+        if [[ -d "${boot_dir}" ]]; then
+          BOOT_STATUS_LOG="${boot_dir}/tortoisebot-cloud-init-status.log"
+          break
+        fi
+      done
+      if [[ -n "${BOOT_STATUS_LOG}" ]]; then
+        exec > >(tee -a /var/log/tortoisebot-bootstrap-login.log "${BOOT_STATUS_LOG}") 2>&1
+      else
+        exec >/var/log/tortoisebot-bootstrap-login.log 2>&1
+      fi
+      echo "==> tortoisebot SSH bootstrap start $(date -Is)"
 
       USERNAME="__USERNAME__"
       PASSWORD="__PASSWORD__"
@@ -68,6 +83,8 @@ write_files:
         chown "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.ssh/authorized_keys"
         chmod 0600 "/home/${USERNAME}/.ssh/authorized_keys"
       fi
+
+      echo "==> tortoisebot SSH bootstrap complete $(date -Is)"
   - path: /usr/local/sbin/tortoisebot-install.sh
     owner: root:root
     permissions: '0755'
