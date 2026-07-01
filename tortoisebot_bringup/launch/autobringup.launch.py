@@ -107,6 +107,7 @@ def generate_launch_description():
         package='v4l2_camera',
         executable='v4l2_camera_node',
         name='camera_node',
+        namespace='camera',
         output='screen',
         parameters=[{
             'video_device': camera_device,

@@ -9,8 +9,8 @@ from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJ
 RECORD_TOPICS = [
     '/scan',
     '/imu/data',
-    '/image_raw',
-    '/camera_info',
+    '/camera/image_raw',
+    '/camera/camera_info',
     '/tf',
     '/tf_static',
     '/cmd_vel',
