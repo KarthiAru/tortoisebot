@@ -110,7 +110,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'video_device': camera_device,
-            'image_size': [800, 600],
+            'image_size': [640, 480],
             'pixel_format': 'YUYV',
             'output_encoding': 'rgb8',
             'camera_frame_id': 'camera_link',
