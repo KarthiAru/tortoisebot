@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -uxo pipefail
+
+BOOT_DIR=""
+for candidate in /boot/firmware /boot; do
+  if [[ -d "${candidate}" ]]; then
+    BOOT_DIR="${candidate}"
+    break
+  fi
+done
+
+BOOT_LOG="${BOOT_DIR}/tortoisebot-firstboot.log"
+ROOT_LOG="/var/log/tortoisebot-firstboot.log"
+if [[ -n "${BOOT_DIR}" ]]; then
+  exec > >(tee -a "${ROOT_LOG}" "${BOOT_LOG}") 2>&1
+else
+  exec >"${ROOT_LOG}" 2>&1
+fi
+
+echo "==> TortoiseBot firstboot start $(date -Is)"
+
+USERNAME="__USERNAME__"
+PASSWORD="__PASSWORD__"
+SSH_AUTHORIZED_KEY="__SSH_AUTHORIZED_KEY__"
+WIFI_SSID="__WIFI_SSID__"
+WIFI_PASSWORD="__WIFI_PASSWORD__"
+EXTRA_GROUPS="adm sudo dialout video plugdev"
+
+install -d /etc/ssh/sshd_config.d
+printf '%s\n' \
+  'PasswordAuthentication yes' \
+  'KbdInteractiveAuthentication yes' \
+  'PubkeyAuthentication yes' \
+  >/etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
+trap 'systemctl restart ssh || systemctl restart sshd || true' EXIT
+
+if [[ -n "${WIFI_SSID}" && -n "${WIFI_PASSWORD}" ]]; then
+  install -d /etc/netplan
+  cat >/etc/netplan/99-tortoisebot-wifi.yaml <<NETPLAN_EOF
+network:
+  version: 2
+  wifis:
+    wlan0:
+      optional: true
+      dhcp4: true
+      access-points:
+        "${WIFI_SSID}":
+          password: "${WIFI_PASSWORD}"
+NETPLAN_EOF
+  chmod 0600 /etc/netplan/99-tortoisebot-wifi.yaml
+  netplan generate || true
+  netplan apply || true
+fi
+
+if ! id "${USERNAME}" >/dev/null 2>&1; then
+  useradd -m -s /bin/bash "${USERNAME}"
+else
+  usermod -s /bin/bash "${USERNAME}"
+fi
+
+for group_name in ${EXTRA_GROUPS}; do
+  if getent group "${group_name}" >/dev/null 2>&1; then
+    usermod -aG "${group_name}" "${USERNAME}"
+  fi
+done
+
+echo "${USERNAME}:${PASSWORD}" | chpasswd
+passwd -u "${USERNAME}" || true
+
+install -d -m 0700 -o "${USERNAME}" -g "${USERNAME}" "/home/${USERNAME}/.ssh"
+if [[ -n "${SSH_AUTHORIZED_KEY}" ]]; then
+  printf '%s\n' "${SSH_AUTHORIZED_KEY}" > "/home/${USERNAME}/.ssh/authorized_keys"
+  chown "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.ssh/authorized_keys"
+  chmod 0600 "/home/${USERNAME}/.ssh/authorized_keys"
+fi
+
+if [[ -n "${BOOT_DIR}" && -f "${BOOT_DIR}/cmdline.txt" ]]; then
+  sed -i -E 's/(^| )systemd\.run=\/boot\/firmware\/tortoisebot-firstboot\.sh( |$)/ /g; s/  +/ /g; s/^ //; s/ $//' "${BOOT_DIR}/cmdline.txt"
+fi
+
+echo "==> TortoiseBot firstboot complete $(date -Is)"

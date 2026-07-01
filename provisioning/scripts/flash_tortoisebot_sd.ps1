@@ -51,6 +51,21 @@ function Write-Info([string]$Message) {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Enable-FirstBootHook([string]$BootRoot) {
+  $cmdlinePath = Join-Path $BootRoot "cmdline.txt"
+  if (-not (Test-Path $cmdlinePath)) {
+    throw "cmdline.txt was not found on $BootRoot; cannot install first-boot hook."
+  }
+
+  $hook = "systemd.run=/boot/firmware/tortoisebot-firstboot.sh"
+  $cmdline = (Get-Content -Raw -Path $cmdlinePath).Trim()
+  $cmdline = ($cmdline -replace '(^|\s)systemd\.run=\S+', ' ').Trim()
+  $cmdline = ($cmdline -replace '\s+', ' ').Trim()
+  $cmdline = "$cmdline $hook".Trim()
+  Set-Content -Path $cmdlinePath -Value $cmdline -Encoding ASCII -NoNewline
+  Write-Info "Installed first-boot systemd hook in cmdline.txt"
+}
+
 function Assert-Admin {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -601,7 +616,7 @@ else {
 }
 
 $bootRoot = Wait-SystemBootVolume -TargetDiskNumber $TargetDiskNumber
-Write-Info "Writing cloud-init files to $bootRoot"
+Write-Info "Writing boot provisioning files to $bootRoot"
 
 $templateDir = Join-Path $ProvisioningDir "cloud-init"
 $resolvedSshAuthorizedKey = if ([string]::IsNullOrWhiteSpace($SshAuthorizedKey)) { Get-DefaultSshAuthorizedKey } else { $SshAuthorizedKey.Trim() }
@@ -627,6 +642,10 @@ $values = @{
 Render-Template (Join-Path $templateDir "user-data.template") (Join-Path $bootRoot "user-data") $values
 Render-Template (Join-Path $templateDir "meta-data.template") (Join-Path $bootRoot "meta-data") $values
 Render-Template (Join-Path $templateDir "network-config.template") (Join-Path $bootRoot "network-config") $values
+
+$firstbootDir = Join-Path $ProvisioningDir "firstboot"
+Render-Template (Join-Path $firstbootDir "tortoisebot-firstboot.sh.template") (Join-Path $bootRoot "tortoisebot-firstboot.sh") $values
+Enable-FirstBootHook -BootRoot $bootRoot
 
 Write-Info "Done. Eject the SD card, boot the Raspberry Pi, wait for it to join Wi-Fi, then SSH in:"
 Write-Host "  ssh -i `$env:USERPROFILE\.ssh\id_ed25519 $Username@<raspberry-pi-ip>"
