@@ -22,8 +22,6 @@ echo "==> TortoiseBot firstboot start $(date -Is)"
 USERNAME="__USERNAME__"
 PASSWORD="__PASSWORD__"
 SSH_AUTHORIZED_KEY="__SSH_AUTHORIZED_KEY__"
-WIFI_SSID="__WIFI_SSID__"
-WIFI_PASSWORD="__WIFI_PASSWORD__"
 EXTRA_GROUPS="adm sudo dialout video plugdev"
 
 install -d /etc/ssh/sshd_config.d
@@ -33,24 +31,6 @@ printf '%s\n' \
   'PubkeyAuthentication yes' \
   >/etc/ssh/sshd_config.d/10-tortoisebot-password-auth.conf
 trap 'systemctl restart ssh || systemctl restart sshd || true' EXIT
-
-if [[ -n "${WIFI_SSID}" && -n "${WIFI_PASSWORD}" ]]; then
-  install -d /etc/netplan
-  cat >/etc/netplan/99-tortoisebot-wifi.yaml <<NETPLAN_EOF
-network:
-  version: 2
-  wifis:
-    wlan0:
-      optional: true
-      dhcp4: true
-      access-points:
-        "${WIFI_SSID}":
-          password: "${WIFI_PASSWORD}"
-NETPLAN_EOF
-  chmod 0600 /etc/netplan/99-tortoisebot-wifi.yaml
-  netplan generate || true
-  netplan apply || true
-fi
 
 if ! id "${USERNAME}" >/dev/null 2>&1; then
   useradd -m -s /bin/bash "${USERNAME}"
