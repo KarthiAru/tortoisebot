@@ -25,6 +25,7 @@ param(
   [string]$ImageUrl = "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz",
   [string]$CacheDir,
   [string[]]$BlockedDriveLetters = @("C", "D"),
+  [int]$MaxDiskSizeGB = 128,
   [Alias("Config")]
   [string]$LocalConfigPath,
   [switch]$ForceDownload,
@@ -103,7 +104,7 @@ function Get-PartitionProperty([object]$Partition, [string]$Name) {
 function Show-TargetDiskDetails([int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
   Write-Host "Selected target disk:" -ForegroundColor Yellow
-  $disk | Select-Object Number, FriendlyName, SerialNumber, BusType, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly | Format-List | Out-Host
+  $disk | Select-Object Number, FriendlyName, SerialNumber, BusType, @{Name="SizeGB"; Expression={[math]::Round($_.Size / 1GB, 2)}}, Size, PartitionStyle, OperationalStatus, IsOffline, IsReadOnly | Format-List | Out-Host
 
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
   if ($partitions.Count -gt 0) {
@@ -149,8 +150,9 @@ function Assert-TargetDiskSafe([int]$TargetDiskNumber) {
     throw "Disk $TargetDiskNumber appears to contain a Windows boot/system partition. Refusing to flash."
   }
 
-  if (-not $Force -and $disk.Size -gt 512GB) {
-    throw "Disk $TargetDiskNumber is larger than 512 GB. Refusing to flash without -Force."
+  $diskSizeGB = [math]::Round($disk.Size / 1GB, 2)
+  if ($disk.Size -ge ($MaxDiskSizeGB * 1GB)) {
+    throw "Disk $TargetDiskNumber is $diskSizeGB GB. Refusing to flash disks that are $MaxDiskSizeGB GB or larger."
   }
 }
 function Select-TargetDiskNumber {
@@ -258,6 +260,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   Write-Host ""
   Write-Host "About to overwrite the selected physical disk with image:" -ForegroundColor Yellow
   Write-Host "  Disk:  $TargetDiskNumber"
+  Write-Host "  Size:  $([math]::Round($disk.Size / 1GB, 2)) GB"
   Write-Host "  Image: $ImgPath"
   $confirmation = Read-Host "Type FLASH DISK $TargetDiskNumber to continue"
   if ($confirmation -ne "FLASH DISK $TargetDiskNumber") {

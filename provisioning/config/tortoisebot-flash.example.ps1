@@ -14,4 +14,5 @@ $TortoiseBotFlashDefaults = @{
   RepoBranch   = "mcap-logging"
   # CacheDir = "C:\tortoisebot-cache"
   BlockedDriveLetters = @("C", "D")
+  MaxDiskSizeGB = 128
 }

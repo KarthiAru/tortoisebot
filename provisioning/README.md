@@ -68,7 +68,7 @@ The write step is destructive and still requires typing `FLASH DISK <disk number
 anything is written. Drive letters are easier to recognize, but raw image writing
 happens to the whole physical disk underneath that drive letter.
 
-By default, `BlockedDriveLetters = @("C", "D")`, so the script refuses to target any disk containing either of those drive letters and will not assign them while mounting `system-boot`.
+By default, `BlockedDriveLetters = @("C", "D")`, so the script refuses to target any disk containing either of those drive letters and will not assign them while mounting `system-boot`. It also refuses disks that are 128 GB or larger by default.
 
 ## First Boot
 
