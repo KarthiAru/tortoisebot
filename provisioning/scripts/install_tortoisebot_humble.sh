@@ -48,6 +48,7 @@ apt-get install -y \
   ros-humble-ros2bag \
   ros-humble-rosbag2-storage-mcap \
   ros-humble-rosbag2-transport \
+  ros-humble-camera-ros \
   ros-humble-v4l2-camera \
   ros-humble-image-transport-plugins
 

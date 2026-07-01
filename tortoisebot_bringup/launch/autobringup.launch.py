@@ -24,6 +24,15 @@ def real_robot_and_enabled(use_sim_time, enabled):
     ])
 
 
+def real_robot_enabled_and_driver(use_sim_time, enabled, camera_driver, expected_driver):
+    return PythonExpression([
+        "'true' if '", use_sim_time, "'.lower() == 'false' and '",
+        enabled, "'.lower() == 'true' and '",
+        camera_driver, "'.lower() == '", expected_driver,
+        "' else 'false'",
+    ])
+
+
 def launch_rviz_when(use_sim_time, launch_rviz, exploration, expected_exploration):
     return PythonExpression([
         "'true' if '", use_sim_time, "'.lower() == 'false' and '",
@@ -53,6 +62,7 @@ def generate_launch_description():
     exploration = LaunchConfiguration('exploration')
     map_file = LaunchConfiguration('map_file')
     camera_device = LaunchConfiguration('camera_device')
+    camera_driver = LaunchConfiguration('camera_driver')
     record_mcap = LaunchConfiguration('record_mcap')
     launch_rviz = LaunchConfiguration('launch_rviz')
     enable_imu = LaunchConfiguration('enable_imu')
@@ -103,7 +113,22 @@ def generate_launch_description():
         condition=UnlessCondition(use_sim_time),
     )
 
-    camera = Node(
+    libcamera = Node(
+        package='camera_ros',
+        executable='camera_node',
+        name='camera_node',
+        namespace='camera',
+        output='screen',
+        parameters=[{
+            'width': 640,
+            'height': 480,
+            'frame_id': 'camera_link',
+        }],
+        condition=IfCondition(real_robot_enabled_and_driver(
+            use_sim_time, enable_camera, camera_driver, 'libcamera')),
+    )
+
+    v4l2_camera = Node(
         package='v4l2_camera',
         executable='v4l2_camera_node',
         name='camera_node',
@@ -116,7 +141,8 @@ def generate_launch_description():
             'output_encoding': 'rgb8',
             'camera_frame_id': 'camera_link',
         }],
-        condition=IfCondition(real_robot_and_enabled(use_sim_time, enable_camera)),
+        condition=IfCondition(real_robot_enabled_and_driver(
+            use_sim_time, enable_camera, camera_driver, 'v4l2')),
     )
 
     recorder = IncludeLaunchDescription(
@@ -228,7 +254,9 @@ def generate_launch_description():
         DeclareLaunchArgument('map_file', default_value=default_map,
                               description='Path to saved map yaml (used when exploration=False)'),
         DeclareLaunchArgument('camera_device', default_value='/dev/video0',
-                              description='V4L2 camera device path on the robot'),
+                              description='V4L2 camera device path when camera_driver:=v4l2'),
+        DeclareLaunchArgument('camera_driver', default_value='libcamera',
+                              description='Camera driver: libcamera for Pi CSI, v4l2 for USB webcams'),
         DeclareLaunchArgument('record_mcap', default_value='False',
                               description='Record hardware topics to MCAP when use_sim_time=False'),
         DeclareLaunchArgument('launch_rviz', default_value='False',
@@ -246,7 +274,8 @@ def generate_launch_description():
         lidar,
         imu,
         motors,
-        camera,
+        libcamera,
+        v4l2_camera,
         recorder,
         cartographer,
         navigation,

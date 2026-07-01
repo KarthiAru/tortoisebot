@@ -25,6 +25,7 @@ def generate_launch_description():
     exploration = LaunchConfiguration('exploration')
     map_file = LaunchConfiguration('map_file')
     camera_device = LaunchConfiguration('camera_device')
+    camera_driver = LaunchConfiguration('camera_driver')
     record_mcap = LaunchConfiguration('record_mcap')
     launch_rviz = LaunchConfiguration('launch_rviz')
     enable_imu = LaunchConfiguration('enable_imu')
@@ -40,7 +41,9 @@ def generate_launch_description():
         DeclareLaunchArgument('map_file', default_value=default_map,
                               description='Path to saved map yaml when exploration=False'),
         DeclareLaunchArgument('camera_device', default_value='/dev/video0',
-                              description='V4L2 camera device path on the robot'),
+                              description='V4L2 camera device path when camera_driver:=v4l2'),
+        DeclareLaunchArgument('camera_driver', default_value='libcamera',
+                              description='Camera driver: libcamera for Pi CSI, v4l2 for USB webcams'),
         DeclareLaunchArgument('record_mcap', default_value='False',
                               description='Record hardware topics to MCAP when use_sim_time=False'),
         DeclareLaunchArgument('launch_rviz', default_value='False',
@@ -61,6 +64,7 @@ def generate_launch_description():
                 'exploration': exploration,
                 'map_file': map_file,
                 'camera_device': camera_device,
+                'camera_driver': camera_driver,
                 'record_mcap': record_mcap,
                 'launch_rviz': launch_rviz,
                 'enable_imu': enable_imu,
