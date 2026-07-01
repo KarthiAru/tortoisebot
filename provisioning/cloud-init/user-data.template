@@ -87,4 +87,14 @@ write_files:
       To monitor install progress:
         tail -f /var/log/tortoisebot-install.log
 
+  - path: /etc/ssh/sshd_config.d/99-tortoisebot-password-auth.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      PasswordAuthentication yes
+      KbdInteractiveAuthentication yes
+
+runcmd:
+  - [ bash, -lc, "systemctl restart ssh || systemctl restart sshd" ]
+
 final_message: "TortoiseBot base boot complete. SSH in and run: sudo /usr/local/sbin/tortoisebot-install.sh"

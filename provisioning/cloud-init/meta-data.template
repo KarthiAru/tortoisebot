@@ -1,2 +1,2 @@
-instance-id: tortoisebot-__HOSTNAME__
+instance-id: tortoisebot-__HOSTNAME__-manual-ssh-v2
 local-hostname: __HOSTNAME__
