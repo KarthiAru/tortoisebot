@@ -11,5 +11,5 @@ $TortoiseBotFlashDefaults = @{
   Username     = "tortoisebot"
   UserPassword = "raspberry"
   RepoUrl      = "https://github.com/rigbetellabs/tortoisebot.git"
-  RepoBranch   = "codex/ros2-hardware-mcap-logging"
+  RepoBranch   = "mcap-logging"
 }

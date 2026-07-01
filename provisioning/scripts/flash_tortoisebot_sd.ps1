@@ -21,7 +21,7 @@ param(
   [string]$Username = "tortoisebot",
   [string]$UserPassword = "raspberry",
   [string]$RepoUrl = "https://github.com/rigbetellabs/tortoisebot.git",
-  [string]$RepoBranch = "codex/ros2-hardware-mcap-logging",
+  [string]$RepoBranch = "mcap-logging",
   [string]$ImageUrl = "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz",
   [string]$WorkDir = "$PSScriptRoot\..\work",
   [string]$LocalConfigPath = "$PSScriptRoot\..\config\tortoisebot-flash.local.ps1",
