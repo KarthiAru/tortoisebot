@@ -380,6 +380,46 @@ function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   Start-Sleep -Seconds 2
   return $locks
 }
+function Get-AvailableDriveLetter([string]$PreferredDriveLetter) {
+  $used = @(Get-Volume | Where-Object DriveLetter | ForEach-Object { Normalize-DriveLetter ([string]$_.DriveLetter) })
+  $blocked = @($BlockedDriveLetters | ForEach-Object { Normalize-DriveLetter $_ })
+
+  if (-not [string]::IsNullOrWhiteSpace($PreferredDriveLetter)) {
+    $preferred = Normalize-DriveLetter $PreferredDriveLetter
+    if ($used -notcontains $preferred -and $blocked -notcontains $preferred) { return $preferred }
+  }
+
+  foreach ($code in 69..90) {
+    $candidate = [string][char]$code
+    if ($used -notcontains $candidate -and $blocked -notcontains $candidate) { return $candidate }
+  }
+
+  return $null
+}
+
+function Restore-ReadablePartitionDriveLetter([int]$TargetDiskNumber, [string]$PreferredDriveLetter) {
+  Update-HostStorageCache
+  $partition = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue |
+    Where-Object { -not $_.DriveLetter -and (Get-PartitionProperty $_ "Type") -notmatch "Unknown" } |
+    Sort-Object PartitionNumber |
+    Select-Object -First 1)
+  if ($partition.Count -eq 0) { return }
+
+  $letter = Get-AvailableDriveLetter $PreferredDriveLetter
+  if (-not $letter) {
+    Write-Warning "Raw write did not finish and no safe drive letter is available to remount the SD card."
+    return
+  }
+
+  try {
+    Write-Warning "Raw write did not finish; restoring $letter`: to disk $TargetDiskNumber partition $($partition[0].PartitionNumber)."
+    Set-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $partition[0].PartitionNumber -NewDriveLetter $letter -ErrorAction Stop
+  }
+  catch {
+    Write-Warning "Could not restore a drive letter for disk $TargetDiskNumber. Run Administrator PowerShell and use: Set-Partition -DiskNumber $TargetDiskNumber -PartitionNumber $($partition[0].PartitionNumber) -NewDriveLetter $letter"
+  }
+}
+
 function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
 
@@ -418,6 +458,8 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
     $inputStream = $null
     $outputStream = $null
     $physicalHandle = $null
+    $writeCompleted = $false
+    $preferredDriveLetter = if (-not [string]::IsNullOrWhiteSpace($DriveLetter)) { Normalize-DriveLetter $DriveLetter } else { $null }
     try {
       $inputStream = [IO.File]::Open($ImgPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
       $physicalHandle = Open-PhysicalDriveForWrite -TargetDiskNumber $TargetDiskNumber
@@ -430,6 +472,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
         Write-Progress -Activity "Writing SD card image" -Status "$([math]::Round(($written / 1MB), 1)) MB / $([math]::Round(($total / 1MB), 1)) MB" -PercentComplete (($written / $total) * 100)
       }
       $outputStream.Flush()
+      $writeCompleted = $true
     }
     finally {
       if ($outputStream) { $outputStream.Dispose() }
@@ -443,6 +486,9 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
         Set-Disk -Number $TargetDiskNumber -IsOffline $false -ErrorAction SilentlyContinue
       }
       Update-HostStorageCache
+      if (-not $writeCompleted) {
+        Restore-ReadablePartitionDriveLetter -TargetDiskNumber $TargetDiskNumber -PreferredDriveLetter $preferredDriveLetter
+      }
     }
   }
 }
