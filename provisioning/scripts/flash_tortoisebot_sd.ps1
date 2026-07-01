@@ -51,19 +51,17 @@ function Write-Info([string]$Message) {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function Enable-FirstBootHook([string]$BootRoot) {
+function Remove-FirstBootHook([string]$BootRoot) {
   $cmdlinePath = Join-Path $BootRoot "cmdline.txt"
-  if (-not (Test-Path $cmdlinePath)) {
-    throw "cmdline.txt was not found on $BootRoot; cannot install first-boot hook."
-  }
+  if (-not (Test-Path $cmdlinePath)) { return }
 
-  $hook = "systemd.run=/boot/firmware/tortoisebot-firstboot.sh"
   $cmdline = (Get-Content -Raw -Path $cmdlinePath).Trim()
-  $cmdline = ($cmdline -replace '(^|\s)systemd\.run=\S+', ' ').Trim()
-  $cmdline = ($cmdline -replace '\s+', ' ').Trim()
-  $cmdline = "$cmdline $hook".Trim()
-  Set-Content -Path $cmdlinePath -Value $cmdline -Encoding ASCII -NoNewline
-  Write-Info "Installed first-boot systemd hook in cmdline.txt"
+  $cleaned = ($cmdline -replace '(^|\s)systemd\.run=\S+', ' ').Trim()
+  $cleaned = ($cleaned -replace '\s+', ' ').Trim()
+  if ($cleaned -ne $cmdline) {
+    Set-Content -Path $cmdlinePath -Value $cleaned -Encoding ASCII -NoNewline
+    Write-Info "Removed first-boot systemd hook from cmdline.txt"
+  }
 }
 
 function Assert-Admin {
