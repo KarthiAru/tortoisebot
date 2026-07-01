@@ -619,6 +619,9 @@ Render-Template (Join-Path $templateDir "user-data.template") (Join-Path $bootRo
 Render-Template (Join-Path $templateDir "meta-data.template") (Join-Path $bootRoot "meta-data") $values
 Render-Template (Join-Path $templateDir "network-config.template") (Join-Path $bootRoot "network-config") $values
 
-Write-Info "Done. Eject the SD card, boot the Raspberry Pi, and watch first boot with:"
-Write-Host "  ssh $Username@$HostName.local"
-Write-Host "  tail -f /var/log/tortoisebot-firstboot.log"
+Write-Info "Done. Eject the SD card, boot the Raspberry Pi, wait for it to join Wi-Fi, then SSH in:"
+Write-Host "  ssh -i `$env:USERPROFILE\.ssh\id_ed25519 $Username@<raspberry-pi-ip>"
+Write-Host "Then start the ROS 2 Humble/TortoiseBot install manually:"
+Write-Host "  sudo /usr/local/sbin/tortoisebot-install.sh"
+Write-Host "Monitor install progress with:"
+Write-Host "  tail -f /var/log/tortoisebot-install.log"
