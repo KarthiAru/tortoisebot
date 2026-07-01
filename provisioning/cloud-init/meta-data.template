@@ -1,0 +1,2 @@
+instance-id: tortoisebot-__HOSTNAME__
+local-hostname: __HOSTNAME__

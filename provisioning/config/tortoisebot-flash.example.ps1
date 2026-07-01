@@ -1,0 +1,12 @@
+# Copy this file to tortoisebot-flash.local.ps1 and fill in your values.
+# The .local.ps1 file is ignored by Git so Wi-Fi credentials stay private.
+$TortoiseBotFlashDefaults = @{
+  DiskNumber   = 0
+  WifiSsid     = "YOUR_WIFI_SSID"
+  WifiPassword = "YOUR_WIFI_PASSWORD"
+  HostName     = "tortoisebot"
+  Username     = "tortoisebot"
+  UserPassword = "raspberry"
+  RepoUrl      = "https://github.com/rigbetellabs/tortoisebot.git"
+  RepoBranch   = "codex/ros2-hardware-mcap-logging"
+}

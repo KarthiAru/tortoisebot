@@ -1,0 +1,12 @@
+version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    optional: true
+wifis:
+  wlan0:
+    dhcp4: true
+    optional: true
+    access-points:
+      "__WIFI_SSID__":
+        password: "__WIFI_PASSWORD__"

@@ -1,0 +1,72 @@
+#cloud-config
+hostname: __HOSTNAME__
+manage_etc_hosts: true
+ssh_pwauth: true
+
+users:
+  - default
+  - name: __USERNAME__
+    gecos: TortoiseBot Operator
+    groups: adm,sudo,dialout,video,plugdev
+    shell: /bin/bash
+    lock_passwd: false
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+chpasswd:
+  expire: false
+  list: |
+    __USERNAME__:__PASSWORD__
+
+package_update: true
+package_upgrade: false
+
+write_files:
+  - path: /usr/local/sbin/tortoisebot-firstboot.sh
+    owner: root:root
+    permissions: '0755'
+    content: |
+      #!/usr/bin/env bash
+      set -euxo pipefail
+
+      USERNAME="__USERNAME__"
+      REPO_URL="__REPO_URL__"
+      REPO_BRANCH="__REPO_BRANCH__"
+      WS="/home/${USERNAME}/tb_ws"
+      REPO_DIR="${WS}/src/tortoisebot"
+      SENTINEL="/var/lib/tortoisebot/.firstboot-complete"
+
+      if [[ -f "${SENTINEL}" ]]; then
+        exit 0
+      fi
+
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y ca-certificates git
+
+      install -d -o "${USERNAME}" -g "${USERNAME}" "${WS}/src"
+      if [[ ! -d "${REPO_DIR}/.git" ]]; then
+        sudo -u "${USERNAME}" git clone --branch "${REPO_BRANCH}" "${REPO_URL}" "${REPO_DIR}"
+      else
+        sudo -u "${USERNAME}" git -C "${REPO_DIR}" fetch origin "${REPO_BRANCH}"
+        sudo -u "${USERNAME}" git -C "${REPO_DIR}" checkout "${REPO_BRANCH}"
+        sudo -u "${USERNAME}" git -C "${REPO_DIR}" pull --ff-only
+      fi
+
+      bash "${REPO_DIR}/provisioning/scripts/install_tortoisebot_humble.sh"
+
+      cd "${WS}"
+      rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
+      sudo -u "${USERNAME}" bash -lc "source /opt/ros/humble/setup.bash && cd '${WS}' && colcon build"
+
+      if ! grep -q "${WS}/install/setup.bash" "/home/${USERNAME}/.bashrc"; then
+        echo "source ${WS}/install/setup.bash" >> "/home/${USERNAME}/.bashrc"
+      fi
+      chown "${USERNAME}:${USERNAME}" "/home/${USERNAME}/.bashrc"
+
+      install -d /var/lib/tortoisebot
+      touch "${SENTINEL}"
+
+runcmd:
+  - [ bash, -lc, "/usr/local/sbin/tortoisebot-firstboot.sh 2>&1 | tee /var/log/tortoisebot-firstboot.log" ]
+
+final_message: "TortoiseBot first boot provisioning complete. See /var/log/tortoisebot-firstboot.log."

@@ -23,6 +23,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/ros-arc
 
 apt-get update
 apt-get install -y \
+  ca-certificates \
   build-essential \
   git \
   python3-colcon-common-extensions \
@@ -51,6 +52,21 @@ apt-get install -y \
 
 pip3 install adafruit-blinka adafruit-circuitpython-bno055
 
+for group in dialout gpio i2c video plugdev; do
+  groupadd -f "$group"
+done
+
+for user_home in /home/*; do
+  user="$(basename "$user_home")"
+  if id "$user" >/dev/null 2>&1; then
+    usermod -aG dialout,gpio,i2c,video,plugdev "$user" || true
+  fi
+done
+
+if [[ -f /boot/firmware/config.txt ]] && ! grep -q '^dtparam=i2c_arm=on' /boot/firmware/config.txt; then
+  echo 'dtparam=i2c_arm=on' >> /boot/firmware/config.txt
+fi
+
 if ! rosdep db 2>/dev/null | grep -q "humble"; then
   rosdep init || true
 fi
@@ -62,4 +78,4 @@ if ! grep -q "/opt/ros/humble/setup.bash" /home/*/.bashrc 2>/dev/null; then
   done
 fi
 
-echo "TortoiseBot ROS 2 Humble dependencies installed."
+echo "TortoiseBot ROS 2 Humble dependencies installed. Reboot if I2C was enabled for the first time."

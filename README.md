@@ -385,23 +385,26 @@ Open the generated `.mcap` file in Foxglove from your PC. Raw camera frames are 
 
 ### 5.1 Load This Repo Onto an SD Card
 
-1. Flash **Ubuntu Server 22.04 LTS 64-bit** with Raspberry Pi Imager.
-2. Use Imager's OS customization to enable SSH and configure Wi-Fi, or copy
-   [`provisioning/netplan/50-cloud-init.yaml.template`](provisioning/netplan/50-cloud-init.yaml.template)
-   to `/etc/netplan/50-cloud-init.yaml` on the SD card writable partition and
-   replace the Wi-Fi placeholders.
-3. Boot the Raspberry Pi and SSH into it.
-4. Clone this repo into `~/tb_ws/src/tortoisebot`.
-5. Run the provisioning installer:
+From Windows PowerShell as Administrator, list disks and flash the card:
+
+```powershell
+.\provisioning\scripts\flash_tortoisebot_sd.ps1 -ListDisks
+Copy-Item .\provisioning\config\tortoisebot-flash.example.ps1 `
+  .\provisioning\config\tortoisebot-flash.local.ps1
+notepad .\provisioning\config\tortoisebot-flash.local.ps1
+.\provisioning\scripts\flash_tortoisebot_sd.ps1
+```
+
+The local config file stores repeatable defaults such as SD-card disk number,
+Wi-Fi SSID/password, hostname, repo URL, and branch. It is ignored by Git so
+secrets stay out of commits.
+
+On first boot the Pi uses cloud-init to join Wi-Fi, install ROS 2 Humble and the
+TortoiseBot dependencies, clone this repo, run `rosdep`, and build `~/tb_ws`.
+Watch progress on the robot with:
 
 ```bash
-cd ~/tb_ws/src/tortoisebot
-sudo bash provisioning/scripts/install_tortoisebot_humble.sh
-cd ~/tb_ws
-rosdep install --from-paths src --ignore-src -r -y
-colcon build
-echo "source ~/tb_ws/install/setup.bash" >> ~/.bashrc
-source ~/.bashrc
+sudo tail -f /var/log/tortoisebot-firstboot.log
 ```
 
 ### 5.2 Can ROS 2 Humble and This Code Be Pre-Packaged?

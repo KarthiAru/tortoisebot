@@ -4,37 +4,110 @@ Use Ubuntu Server 22.04 LTS 64-bit for Raspberry Pi as the base image. ROS 2
 Humble binary packages target Ubuntu Jammy, so this is the most reliable route
 for TortoiseBot hardware.
 
-## Flash the SD Card
+The repeatable flow is:
+
+1. Flash the Ubuntu Raspberry Pi image to the microSD card.
+2. Inject cloud-init Wi-Fi, user, repo, and first-boot installer config.
+3. Boot the Pi and let cloud-init install ROS 2 Humble, clone this repo, run
+   `rosdep`, and build the workspace.
+
+## Windows Automated Flashing
+
+Run PowerShell as Administrator from this repo checkout.
+
+List disks first:
+
+```powershell
+.\provisioning\scripts\flash_tortoisebot_sd.ps1 -ListDisks
+```
+
+Create your private defaults file:
+
+```powershell
+Copy-Item .\provisioning\config\tortoisebot-flash.example.ps1 `
+  .\provisioning\config\tortoisebot-flash.local.ps1
+notepad .\provisioning\config\tortoisebot-flash.local.ps1
+```
+
+Fill in `DiskNumber`, `WifiSsid`, `WifiPassword`, `RepoUrl`, and `RepoBranch`.
+The `.local.ps1` file is ignored by Git so Wi-Fi credentials stay private.
+
+Flash and seed the card:
+
+```powershell
+.\provisioning\scripts\flash_tortoisebot_sd.ps1
+```
+
+Or pass values directly:
+
+```powershell
+.\provisioning\scripts\flash_tortoisebot_sd.ps1 `
+  -DiskNumber 3 `
+  -WifiSsid "YOUR_WIFI_SSID" `
+  -WifiPassword "YOUR_WIFI_PASSWORD" `
+  -RepoUrl "https://github.com/rigbetellabs/tortoisebot.git" `
+  -RepoBranch "codex/ros2-hardware-mcap-logging"
+```
+
+The script downloads the official Ubuntu 22.04.5 Raspberry Pi arm64 image,
+expands it, writes it to the selected physical disk, then writes these files to
+`system-boot`:
+
+- `user-data`
+- `meta-data`
+- `network-config`
+
+The write step is destructive and requires typing `FLASH <disk number>` before
+anything is written.
+
+## First Boot
+
+Insert the card into the Raspberry Pi and boot it. Provisioning can take a while
+because ROS 2, Nav2, Cartographer, rosbag2 MCAP support, and the workspace build
+all run on first boot.
+
+SSH in after the Pi joins Wi-Fi:
+
+```bash
+ssh tortoisebot@tortoisebot.local
+```
+
+Default generated login is:
+
+| Field | Default |
+|---|---|
+| Hostname | `tortoisebot` |
+| Username | `tortoisebot` |
+| Password | `raspberry` |
+
+Watch first-boot progress:
+
+```bash
+sudo tail -f /var/log/tortoisebot-firstboot.log
+```
+
+The first-boot script is idempotent and writes this sentinel when complete:
+
+```bash
+/var/lib/tortoisebot/.firstboot-complete
+```
+
+## Manual Flashing Fallback
+
+If you prefer Raspberry Pi Imager:
 
 1. Open Raspberry Pi Imager.
 2. Select Ubuntu Server 22.04 LTS 64-bit.
 3. In OS customization, set hostname, username, SSH, locale, and Wi-Fi.
 4. Flash the SD card and boot the Raspberry Pi.
-
-If you prefer manual Wi-Fi setup, mount the SD card writable partition and copy:
-
-```bash
-sudo cp provisioning/netplan/50-cloud-init.yaml.template /media/$USER/writable/etc/netplan/50-cloud-init.yaml
-```
-
-Then replace `YOUR_WIFI_SSID` and `YOUR_WIFI_PASSWORD`, unmount the card, and
-boot the robot.
-
-## Install ROS 2 Humble and TortoiseBot Dependencies
-
-After SSHing into the robot:
+5. SSH in, clone this repo, then run:
 
 ```bash
-sudo apt update
-sudo apt install -y git
-git clone <YOUR_REPO_URL> ~/tb_ws/src/tortoisebot
 cd ~/tb_ws/src/tortoisebot
 sudo bash provisioning/scripts/install_tortoisebot_humble.sh
 cd ~/tb_ws
-rosdep install --from-paths src --ignore-src -r -y
+rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
 colcon build
-echo "source ~/tb_ws/install/setup.bash" >> ~/.bashrc
-source ~/.bashrc
 ```
 
 ## Bake It Into an Image
@@ -45,10 +118,7 @@ image or automate first boot with cloud-init. Baking the install into stock
 Raspberry Pi OS is not recommended for Humble because Raspberry Pi OS is
 Debian-based while Humble binary packages are built for Ubuntu Jammy.
 
-For production images, create a first-boot script that:
-
-1. Applies the Netplan Wi-Fi config.
-2. Runs `provisioning/scripts/install_tortoisebot_humble.sh`.
-3. Clones this repo into `~/tb_ws/src/tortoisebot`.
-4. Runs `rosdep install` and `colcon build`.
-5. Optionally installs a systemd service that launches `autobringup.launch.py`.
+This provisioning layout mirrors the useful ARK-OS pattern: keep the live/device
+installer idempotent, keep repeatable inputs in a config file, and run runtime
+steps on first boot instead of expecting them to work inside an image-build
+chroot.
