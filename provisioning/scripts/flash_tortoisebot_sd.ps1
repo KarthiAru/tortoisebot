@@ -255,23 +255,97 @@ function Expand-XzImage([string]$XzPath, [string]$ImgPath) {
   throw "Need 7z.exe, xz.exe, or WSL with xz to expand raw .img.xz images."
 }
 
+
+function Initialize-NativeVolumeApi {
+  if ("NativeVolume" -as [type]) { return }
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class NativeVolume {
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern SafeFileHandle CreateFile(
+    string lpFileName,
+    uint dwDesiredAccess,
+    uint dwShareMode,
+    IntPtr lpSecurityAttributes,
+    uint dwCreationDisposition,
+    uint dwFlagsAndAttributes,
+    IntPtr hTemplateFile);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool DeviceIoControl(
+    SafeFileHandle hDevice,
+    uint dwIoControlCode,
+    IntPtr lpInBuffer,
+    uint nInBufferSize,
+    IntPtr lpOutBuffer,
+    uint nOutBufferSize,
+    out uint lpBytesReturned,
+    IntPtr lpOverlapped);
+}
+"@
+}
+
+function Invoke-VolumeIoControl([Microsoft.Win32.SafeHandles.SafeFileHandle]$Handle, [uint32]$ControlCode, [string]$Description) {
+  [uint32]$bytesReturned = 0
+  $ok = [NativeVolume]::DeviceIoControl($Handle, $ControlCode, [IntPtr]::Zero, 0, [IntPtr]::Zero, 0, [ref]$bytesReturned, [IntPtr]::Zero)
+  if (-not $ok) {
+    $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "$Description failed with Win32 error $errorCode."
+  }
+}
+
+function Lock-VolumeByDriveLetter([string]$DriveLetter) {
+  Initialize-NativeVolumeApi
+  $letter = Normalize-DriveLetter $DriveLetter
+  $path = "\\.\${letter}:"
+  $genericReadWrite = [uint32]0xC0000000
+  $shareReadWrite = [uint32]0x00000003
+  $openExisting = [uint32]3
+  $fsctlLockVolume = [uint32]0x00090018
+  $fsctlDismountVolume = [uint32]0x00090020
+
+  Write-Info "Locking volume ${letter}:"
+  $handle = [NativeVolume]::CreateFile($path, $genericReadWrite, $shareReadWrite, [IntPtr]::Zero, $openExisting, 0, [IntPtr]::Zero)
+  if ($handle.IsInvalid) {
+    $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "Could not open ${letter}: for locking. Win32 error $errorCode. Close File Explorer or any program using the SD card."
+  }
+
+  try {
+    Invoke-VolumeIoControl -Handle $handle -ControlCode $fsctlLockVolume -Description "Lock ${letter}:"
+    Invoke-VolumeIoControl -Handle $handle -ControlCode $fsctlDismountVolume -Description "Dismount ${letter}:"
+    return $handle
+  }
+  catch {
+    $handle.Dispose()
+    throw
+  }
+}
 function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
   $partitions = @(Get-Partition -DiskNumber $TargetDiskNumber -ErrorAction SilentlyContinue)
-  if ($partitions.Count -eq 0) { return }
+  if ($partitions.Count -eq 0) { return @() }
 
-  Write-Info "Removing drive letters/access paths on disk $TargetDiskNumber"
+  $locks = @()
+  Write-Info "Locking/removing drive letters on disk $TargetDiskNumber"
   foreach ($partition in $partitions) {
+    $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
+    foreach ($volume in $volumes) {
+      if ($volume.DriveLetter) {
+        $locks += Lock-VolumeByDriveLetter ([string]$volume.DriveLetter)
+      }
+    }
+
     $accessPaths = @($partition.AccessPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     foreach ($accessPath in $accessPaths) {
       Write-Info "Removing access path $accessPath from disk $TargetDiskNumber partition $($partition.PartitionNumber)"
       Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath $accessPath -ErrorAction SilentlyContinue
     }
 
-    $volumes = @($partition | Get-Volume -ErrorAction SilentlyContinue)
     foreach ($volume in $volumes) {
       if ($volume.DriveLetter) {
-        Write-Info "Removing drive letter $($volume.DriveLetter):"
-        Remove-PartitionAccessPath -DiskNumber $TargetDiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath "$($volume.DriveLetter):\" -ErrorAction SilentlyContinue
         cmd.exe /d /c "mountvol $($volume.DriveLetter): /p" | Out-Null
       }
     }
@@ -279,6 +353,7 @@ function Dismount-TargetDiskVolumes([int]$TargetDiskNumber) {
 
   Update-HostStorageCache
   Start-Sleep -Seconds 2
+  return $locks
 }
 function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
   $disk = Get-Disk -Number $TargetDiskNumber -ErrorAction Stop
@@ -297,6 +372,7 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
     Write-Info "Preparing disk for raw write"
     Set-Disk -Number $TargetDiskNumber -IsReadOnly $false -ErrorAction SilentlyContinue
     $diskWasSetOffline = $false
+    $volumeLocks = @()
     try {
       Set-Disk -Number $TargetDiskNumber -IsOffline $true -ErrorAction Stop
       $diskWasSetOffline = $true
@@ -305,12 +381,11 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       if ($_.Exception.Message -notmatch "Not Supported|Removable media cannot be set to offline") {
         throw
       }
-      Write-Warning "Windows cannot set removable media offline; dismounting volumes before raw write."
-      Dismount-TargetDiskVolumes -TargetDiskNumber $TargetDiskNumber
+      Write-Warning "Windows cannot set removable media offline; locking/removing volumes before raw write."
     }
 
     if (-not $diskWasSetOffline) {
-      Dismount-TargetDiskVolumes -TargetDiskNumber $TargetDiskNumber
+      $volumeLocks = @(Dismount-TargetDiskVolumes -TargetDiskNumber $TargetDiskNumber)
     }
 
     $target = "\\.\PhysicalDrive$TargetDiskNumber"
@@ -338,6 +413,9 @@ function Write-RawImage([string]$ImgPath, [int]$TargetDiskNumber) {
       if ($outputStream) { $outputStream.Dispose() }
       if ($inputStream) { $inputStream.Dispose() }
       Write-Progress -Activity "Writing SD card image" -Completed
+      foreach ($lock in $volumeLocks) {
+        if ($lock) { $lock.Dispose() }
+      }
       if ($diskWasSetOffline) {
         Set-Disk -Number $TargetDiskNumber -IsOffline $false -ErrorAction SilentlyContinue
       }
