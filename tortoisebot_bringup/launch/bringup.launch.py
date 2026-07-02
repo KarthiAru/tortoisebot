@@ -30,6 +30,9 @@ def generate_launch_description():
     launch_rviz = LaunchConfiguration('launch_rviz')
     enable_imu = LaunchConfiguration('enable_imu')
     enable_camera = LaunchConfiguration('enable_camera')
+    enable_image_optimizer = LaunchConfiguration('enable_image_optimizer')
+    image_downsample_width = LaunchConfiguration('image_downsample_width')
+    image_downsample_height = LaunchConfiguration('image_downsample_height')
     bag_dir = LaunchConfiguration('bag_dir')
     bag_name = LaunchConfiguration('bag_name')
 
@@ -51,7 +54,13 @@ def generate_launch_description():
         DeclareLaunchArgument('enable_imu', default_value='False',
                               description='Start the BNO055 IMU node when use_sim_time=False'),
         DeclareLaunchArgument('enable_camera', default_value='False',
-                              description='Start the V4L2 camera node when use_sim_time=False'),
+                              description='Start the camera node when use_sim_time=False'),
+        DeclareLaunchArgument('enable_image_optimizer', default_value='True',
+                              description='Publish mono8 optimized camera topics when use_sim_time=False'),
+        DeclareLaunchArgument('image_downsample_width', default_value='320',
+                              description='Width for /camera/image_mono_downsampled'),
+        DeclareLaunchArgument('image_downsample_height', default_value='240',
+                              description='Height for /camera/image_mono_downsampled'),
         DeclareLaunchArgument('bag_dir', default_value=os.path.expanduser('~/tortoisebot_mcap'),
                               description='Directory where MCAP rosbag folders are written'),
         DeclareLaunchArgument('bag_name', default_value=default_bag_name,
@@ -69,6 +78,9 @@ def generate_launch_description():
                 'launch_rviz': launch_rviz,
                 'enable_imu': enable_imu,
                 'enable_camera': enable_camera,
+                'enable_image_optimizer': enable_image_optimizer,
+                'image_downsample_width': image_downsample_width,
+                'image_downsample_height': image_downsample_height,
                 'bag_dir': bag_dir,
                 'bag_name': bag_name,
             }.items(),

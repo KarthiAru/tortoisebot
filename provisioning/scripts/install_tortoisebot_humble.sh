@@ -29,6 +29,7 @@ apt-get install -y \
   git \
   python3-ament-package \
   python3-colcon-common-extensions \
+  python3-opencv \
   python3-pip \
   python3-rosdep \
   python3-rpi.gpio \
@@ -41,6 +42,7 @@ apt-get install -y \
   ros-humble-robot-state-publisher \
   ros-humble-cartographer \
   ros-humble-cartographer-ros \
+  ros-humble-cv-bridge \
   ros-humble-teleop-twist-keyboard \
   ros-humble-teleop-twist-joy \
   ros-humble-xacro \

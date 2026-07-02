@@ -299,12 +299,19 @@ ros2 launch tortoisebot_bringup bringup.launch.py \
 ```
 
 The Raspberry Pi CSI camera uses `camera_ros`/libcamera by default. The launch
-publishes Foxglove-friendly topics:
+keeps the raw image available for live debugging and publishes optimized
+Foxglove-friendly topics:
 
 ```text
 /camera/image_raw
+/camera/image_mono
+/camera/image_mono_downsampled
 /camera/camera_info
 ```
+
+`/camera/image_mono_downsampled` defaults to `320x240` `mono8` and is the image
+topic recorded into MCAP by default to keep bags much smaller than raw color
+frames.
 
 For a USB V4L2 webcam fallback, use:
 
@@ -334,7 +341,8 @@ source ~/tb_ws/install/setup.bash
 ros2 topic list
 ros2 topic hz /scan
 ros2 topic hz /camera/image_raw
-ros2 topic info /camera/image_raw -v
+ros2 topic hz /camera/image_mono_downsampled
+ros2 topic info /camera/image_mono_downsampled -v
 ```
 
 Expected important topics:
@@ -342,6 +350,8 @@ Expected important topics:
 ```text
 /scan
 /camera/image_raw
+/camera/image_mono
+/camera/image_mono_downsampled
 /camera/camera_info
 /tf
 /tf_static
@@ -349,27 +359,21 @@ Expected important topics:
 /odom
 ```
 
-`ros2 topic info /camera/image_raw -v` should show:
+`ros2 topic info /camera/image_mono_downsampled -v` should show:
 
-- Publisher: `/camera/camera_node`
+- Publisher: `/image_optimizer`
 - Subscriber: `/rosbag2_recorder` when `record_mcap:=True`
 
-To check the camera image encoding:
+To check the optimized camera image encoding:
 
 ```bash
-ros2 topic echo --once /camera/image_raw | grep encoding
+ros2 topic echo --once /camera/image_mono_downsampled | grep encoding
 ```
 
-Expected Foxglove-compatible encodings include:
+Expected:
 
 ```text
-encoding: bgr8
-```
-
-or:
-
-```text
-encoding: rgb8
+encoding: mono8
 ```
 
 Do not use `/camera/image_raw/header` or `/camera/image_raw/encoding`; those are
@@ -404,7 +408,7 @@ find "$LATEST" -name '*.mcap' -ls
 Expected non-zero message counts:
 
 ```text
-/camera/image_raw
+/camera/image_mono_downsampled
 /camera/camera_info
 /scan
 /tf
@@ -415,18 +419,18 @@ Expected non-zero message counts:
 Open the generated `.mcap` file in Foxglove. For the Image panel, select:
 
 ```text
-/camera/image_raw
+/camera/image_mono_downsampled
 ```
 
 If Foxglove reports an unsupported image encoding, confirm the file is from a
 new recording and check:
 
 ```bash
-ros2 topic echo --once /camera/image_raw | grep encoding
+ros2 topic echo --once /camera/image_mono_downsampled | grep encoding
 ```
 
-Older test bags may contain `nv21`, which Foxglove does not display. Fresh bags
-from this launch should use a standard `bgr8`/`rgb8` image stream.
+Older test bags may contain `nv21` or full raw color images. Fresh bags from
+this launch should record the smaller `mono8` downsampled stream by default.
 
 Copy a bag from the Pi to a PC:
 
@@ -470,7 +474,35 @@ Useful camera checks:
 ```bash
 ros2 topic list | grep camera
 ros2 topic info /camera/image_raw -v
-ros2 topic echo --once /camera/image_raw | grep encoding
+ros2 topic hz /camera/image_mono_downsampled
+ros2 topic echo --once /camera/image_mono_downsampled | grep encoding
+```
+
+#### Optimized Image Topics Are Missing
+
+The MCAP recorder expects `/camera/image_mono_downsampled`. If it is missing,
+make sure the optimizer is enabled and the package was rebuilt:
+
+```bash
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_image_optimizer:=True
+```
+
+Verify:
+
+```bash
+ros2 topic list | grep image_mono
+ros2 topic echo --once /camera/image_mono_downsampled | grep encoding
+```
+
+Expected:
+
+```text
+encoding: mono8
 ```
 
 #### Camera Topics Are Under `/camera/camera_node/...`
