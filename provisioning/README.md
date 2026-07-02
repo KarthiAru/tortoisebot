@@ -4,7 +4,7 @@ Use Ubuntu Server 22.04 LTS 64-bit for Raspberry Pi as the base image. ROS 2 Hum
 
 The recommended workflow now runs on an Ubuntu/Linux machine. It edits the Raspberry Pi image root filesystem directly, so user login, SSH, Wi-Fi, and the manual installer are present before the card ever boots. The old Windows workflow is deprecated because Windows cannot reliably edit the Linux ext4 root partition on the SD card.
 
-## Ubuntu Image Builde
+## Ubuntu Image Builder
 
 Install host tools on the Ubuntu machine:
 

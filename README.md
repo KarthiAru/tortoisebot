@@ -241,171 +241,314 @@ ssh tortoisebot@<ROBOT_IP_ADDRESS>
 
 ---
 
-### 4.3 Sensor Data Visualization
+### 4.3 Hardware Runbook - Copy/Paste Commands
 
-**Step 1 — On the Robot (SSH Terminal 1):** Source ROS 2 Humble and launch all sensors and actuators:
+Use these commands on the Raspberry Pi after SSH login. The robot workspace is
+expected at `~/tb_ws`, with this repo cloned at `~/tb_ws/src/tortoisebot`.
 
-```bash
-source /opt/ros/humble/setup.bash
-ros2 launch tortoisebot_bringup autobringup.launch.py use_sim_time:=False exploration:=True
-```
+#### Source ROS 2 and the Workspace
 
-<p align="center">
-  <img src="https://github.com/rigbetellabs/tortoisebot_docs/blob/ros2/imgs/tortoiseBot_demo/irl_robot_00.jpeg?raw=true" alt="Robot hardware bringup" width="600"/>
-</p>
-
-**Step 2 — On your PC (Terminal 1):** Source your workspace and start keyboard teleoperation:
+Run this in every new SSH terminal before using `ros2`:
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/tb_ws/install/setup.bash
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-**Step 3 — On your PC (Terminal 2):** Launch RViz2 to visualize all sensor streams:
+Optional: make sourcing automatic for future SSH sessions:
+
+```bash
+grep -qxF 'source /opt/ros/humble/setup.bash' ~/.bashrc || echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
+grep -qxF 'source ~/tb_ws/install/setup.bash' ~/.bashrc || echo 'source ~/tb_ws/install/setup.bash' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Sync Latest Code on the Pi
+
+```bash
+cd ~/tb_ws/src/tortoisebot
+git pull --ff-only origin mcap-logging
+
+cd ~/tb_ws
+colcon build --packages-select tortoisebot_bringup
+source install/setup.bash
+```
+
+For larger dependency changes, rebuild everything:
+
+```bash
+cd ~/tb_ws
+colcon build
+source install/setup.bash
+```
+
+#### Start Robot, SLAM, Camera, and MCAP Logging
+
+This is the normal hardware launch for data collection. Leave this terminal
+running until the run is complete.
 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/tb_ws/install/setup.bash
-ros2 launch tortoisebot_description rviz.launch.py
-```
 
-<p align="center">
-  <img src="https://github.com/rigbetellabs/tortoisebot_docs/blob/ros2/imgs/tortoiseBot_demo/irl_robot_viz.jpeg?raw=true" alt="Robot IRL RViz visualization" width="700"/>
-</p>
-
----
-
-### 4.4 Exploration Mode — SLAM Mapping on Real Robot
-
-**Step 1 — On the Robot (SSH Terminal 1):** Launch the robot in exploration mode:
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 launch tortoisebot_bringup autobringup.launch.py use_sim_time:=False exploration:=True
-```
-
-**Step 2 — On your PC:** Source and visualize the live map:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/tb_ws/install/setup.bash
-ros2 launch tortoisebot_description rviz.launch.py
-```
-
-<p align="center">
-  <img src="https://github.com/rigbetellabs/tortoisebot_docs/blob/ros2/imgs/tortoiseBot_demo/irl_viz_02.jpeg?raw=true" alt="SLAM mapping visualization IRL" width="700"/>
-</p>
-
-Teleoperate the robot to map the environment, or use the **Nav2 Goal** button in RViz2 to send autonomous exploration goals.
-
-**Step 3 — Save the map (SSH Terminal 2 on Robot):**
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 run nav2_map_server map_saver_cli -f ~/maps/my_room_map
-```
-
----
-
-### 4.5 Navigation on a Saved Map — Real Robot
-
-**Step 1 — Place the robot** at approximately the same starting position used during mapping.
-
-**Step 2 — On the Robot (SSH Terminal 1):** Launch navigation with the saved map:
-
-```bash
-source /opt/ros/humble/setup.bash
-ros2 launch tortoisebot_bringup autobringup.launch.py \
-  use_sim_time:=False \
-  exploration:=False \
-  map_file:=~/maps/my_room_map.yaml
-```
-
-**Step 3 — On your PC:** Visualize and send navigation goals:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/tb_ws/install/setup.bash
-ros2 launch tortoisebot_description rviz.launch.py
-```
-
-Use the **Nav2 Goal** button in RViz2 to set a target pose and watch the robot navigate autonomously!
-
-> **Multiple Robot Setup:** If operating more than one TortoiseBot on the same network, assign a unique domain ID to each robot to prevent cross-talk:
-> ```bash
-> export ROS_DOMAIN_ID=0   # Set a unique integer per robot (0–101)
-> ```
-
-
----
-
-### 4.6 MCAP Logging for Foxglove
-
-The hardware bringup can record robot data directly to MCAP, which Foxglove opens without conversion.
-
-Record while launching the real robot stack:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/tb_ws/install/setup.bash
-ros2 launch tortoisebot_bringup autobringup.launch.py \
+ros2 launch tortoisebot_bringup bringup.launch.py \
   use_sim_time:=False \
   exploration:=True \
-  record_mcap:=True
-```
-
-Or record from a second SSH terminal after the robot is already running:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/tb_ws/install/setup.bash
-ros2 launch tortoisebot_bringup hardware_record.launch.py
-```
-
-By default, bags are written under `~/tortoisebot_mcap/tortoisebot_hardware_<timestamp>` and include LiDAR, IMU, raw camera images, camera info, TF, velocity commands, motor PWM/direction debug topics, and `/odom` if an odometry source is publishing it.
-
-Useful launch arguments:
-
-```bash
-ros2 launch tortoisebot_bringup autobringup.launch.py \
-  use_sim_time:=False \
   record_mcap:=True \
-  bag_dir:=/home/tortoisebot/logs \
+  enable_camera:=True
+```
+
+The Raspberry Pi CSI camera uses `camera_ros`/libcamera by default. The launch
+publishes Foxglove-friendly topics:
+
+```text
+/camera/image_raw
+/camera/camera_info
+```
+
+For a USB V4L2 webcam fallback, use:
+
+```bash
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  camera_driver:=v4l2 \
   camera_device:=/dev/video0
 ```
 
-Open the generated `.mcap` file in Foxglove from your PC. Raw camera frames are recorded by default for visual analysis, so keep an eye on SD card free space during longer runs.
+#### Stop Robot and Logging
 
-> Note: this repository does not include a wheel encoder odometry driver. The MCAP recorder includes `/odom`, but that topic will only contain data if another odometry node is running.
+Press `Ctrl+C` in the launch terminal. That stops the robot nodes and closes the
+MCAP bag cleanly.
+
+### 4.4 Verify Robot Topics
+
+Use a second SSH terminal while the launch is running:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+ros2 topic list
+ros2 topic hz /scan
+ros2 topic hz /camera/image_raw
+ros2 topic info /camera/image_raw -v
+```
+
+Expected important topics:
+
+```text
+/scan
+/camera/image_raw
+/camera/camera_info
+/tf
+/tf_static
+/cmd_vel
+/odom
+```
+
+`ros2 topic info /camera/image_raw -v` should show:
+
+- Publisher: `/camera/camera_node`
+- Subscriber: `/rosbag2_recorder` when `record_mcap:=True`
+
+To check the camera image encoding:
+
+```bash
+ros2 topic echo --once /camera/image_raw | grep encoding
+```
+
+Expected Foxglove-compatible encodings include:
+
+```text
+encoding: bgr8
+```
+
+or:
+
+```text
+encoding: rgb8
+```
+
+Do not use `/camera/image_raw/header` or `/camera/image_raw/encoding`; those are
+message fields, not ROS topics.
+
+### 4.5 MCAP Logging for Foxglove
+
+The hardware recorder uses ROS 2 `rosbag2` with MCAP storage:
+
+```bash
+ros2 bag record --storage mcap ...
+```
+
+The launch records to:
+
+```text
+~/tortoisebot_mcap/tortoisebot_hardware_<timestamp>/
+```
+
+Find and inspect the latest recording:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+LATEST=$(ls -td ~/tortoisebot_mcap/tortoisebot_hardware_* | head -1)
+echo "$LATEST"
+ros2 bag info "$LATEST"
+find "$LATEST" -name '*.mcap' -ls
+```
+
+Expected non-zero message counts:
+
+```text
+/camera/image_raw
+/camera/camera_info
+/scan
+/tf
+/tf_static
+/cmd_vel
+```
+
+Open the generated `.mcap` file in Foxglove. For the Image panel, select:
+
+```text
+/camera/image_raw
+```
+
+If Foxglove reports an unsupported image encoding, confirm the file is from a
+new recording and check:
+
+```bash
+ros2 topic echo --once /camera/image_raw | grep encoding
+```
+
+Older test bags may contain `nv21`, which Foxglove does not display. Fresh bags
+from this launch should use a standard `bgr8`/`rgb8` image stream.
+
+Copy a bag from the Pi to a PC:
+
+```bash
+scp -r tortoisebot@<ROBOT_IP>:~/tortoisebot_mcap/tortoisebot_hardware_<timestamp> ./
+```
+
+### 4.6 Troubleshooting
+
+#### `ros2: command not found`
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+```
+
+#### Only `/rosout` and `/parameter_events` Are Visible
+
+The robot launch is not running, or you are in a different ROS domain. Start the
+bringup launch, then check again:
+
+```bash
+ros2 topic list
+```
+
+#### Camera Topic Exists But No Frames
+
+Check the camera frame rate:
+
+```bash
+ros2 topic hz /camera/image_raw
+```
+
+Check camera node logs in the launch terminal. For the Raspberry Pi CSI camera,
+`camera_ros` should log an OV5647/OVxxxx camera and a configured stream. Direct
+V4L2 streaming from `/dev/video0` may fail on CSI cameras; that is why the
+default launch uses libcamera instead of `v4l2_camera`.
+
+Useful camera checks:
+
+```bash
+ros2 topic list | grep camera
+ros2 topic info /camera/image_raw -v
+ros2 topic echo --once /camera/image_raw | grep encoding
+```
+
+#### Camera Topics Are Under `/camera/camera_node/...`
+
+Rebuild and restart after pulling the latest launch remaps:
+
+```bash
+cd ~/tb_ws/src/tortoisebot
+git pull --ff-only origin mcap-logging
+
+cd ~/tb_ws
+colcon build --packages-select tortoisebot_bringup
+source install/setup.bash
+```
+
+Then stop the old launch with `Ctrl+C` and start it again.
+
+#### Check Disk Space Before Long Recordings
+
+```bash
+df -h ~
+du -sh ~/tortoisebot_mcap/* | sort -h | tail
+```
+
+> Note: this repository does not include a wheel encoder odometry driver. The
+> MCAP recorder includes `/odom`, but that topic will only contain data if
+> another odometry node is running.
 
 ---
 
 ## 5. Raspberry Pi SD Card Image
 
-### 5.1 Load This Repo Onto an SD Card
+### 5.1 Build and Flash a Repeatable Ubuntu SD Image
 
-From Windows PowerShell as Administrator, list disks and flash the card:
+Use the Ubuntu/Linux provisioning workflow in [`provisioning/`](provisioning/README.md).
+The old Windows PowerShell flow is deprecated because Windows cannot reliably
+configure the Linux ext4 root partition with correct users, SSH keys, ownership,
+and permissions.
 
-```powershell
-.\provisioning\scripts\flash_tortoisebot_sd.ps1 -ListDisks
-Copy-Item .\provisioning\config\tortoisebot-flash.example.ps1 `
-  .\provisioning\config\tortoisebot-flash.local.ps1
-notepad .\provisioning\config\tortoisebot-flash.local.ps1
-.\provisioning\scripts\flash_tortoisebot_sd.ps1
-```
-
-The local config file stores repeatable defaults such as SD-card drive letter,
-Wi-Fi SSID/password, hostname, repo URL, and branch. If neither drive letter nor
-disk number is configured, the script prompts interactively. It is ignored by Git so
-secrets stay out of commits.
-
-On first boot the Pi uses cloud-init to join Wi-Fi, install ROS 2 Humble and the
-TortoiseBot dependencies, clone this repo, run `rosdep`, and build `~/tb_ws`.
-Watch progress on the robot with:
+On an Ubuntu development machine:
 
 ```bash
-sudo tail -f /var/log/tortoisebot-firstboot.log
+sudo apt-get update
+sudo apt-get install -y curl xz-utils util-linux openssl coreutils
+
+cp provisioning/config/tortoisebot-image.example.env provisioning/config/tortoisebot-image.local.env
+nano provisioning/config/tortoisebot-image.local.env
+```
+
+Set Wi-Fi, SSH key, repo URL, and branch in the local env file. Then build and
+flash the card:
+
+```bash
+lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINTS
+sudo bash provisioning/scripts/build_tortoisebot_image.sh --device /dev/sdX
+```
+
+Replace `/dev/sdX` with the whole removable microSD device, not a partition like
+`/dev/sdX1`.
+
+The script caches the Ubuntu base image under `~/.cache/tortoisebot`. Force a
+fresh OS download with:
+
+```bash
+sudo bash provisioning/scripts/build_tortoisebot_image.sh --force-download --device /dev/sdX
+```
+
+After first boot, SSH in and start the manual installer:
+
+```bash
+ssh tortoisebot@<ROBOT_IP>
+sudo /usr/local/sbin/tortoisebot-install.sh
+```
+
+Monitor install logs:
+
+```bash
+tail -f /var/log/tortoisebot-install.log
 ```
 
 ### 5.2 Can ROS 2 Humble and This Code Be Pre-Packaged?
