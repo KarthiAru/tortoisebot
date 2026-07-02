@@ -488,6 +488,30 @@ source install/setup.bash
 
 Then stop the old launch with `Ctrl+C` and start it again.
 
+#### Cartographer Drops Earlier Points
+
+If the launch terminal repeatedly prints this warning:
+
+```text
+range_data_collator.cc:82] Dropped ... earlier points.
+```
+
+rebuild the YDLidar driver after pulling the latest code:
+
+```bash
+cd ~/tb_ws/src/tortoisebot
+git pull --ff-only origin mcap-logging
+
+cd ~/tb_ws
+colcon build --packages-select ydlidar_ros2_driver tortoisebot_slam tortoisebot_bringup
+source install/setup.bash
+```
+
+The driver defaults `disable_point_timestamps: true` so Cartographer treats each
+2D scan as an instantaneous scan. This avoids dropped points caused by SDK
+per-point timestamps that no longer match acquisition order after the driver
+re-bins points into angle order.
+
 #### Check Disk Space Before Long Recordings
 
 ```bash

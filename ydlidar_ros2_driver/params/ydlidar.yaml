@@ -22,4 +22,5 @@ ydlidar_ros2_driver_node:
     frequency: 10.0
     invalid_range_is_inf: false
     use_time_synchronize: false
+    disable_point_timestamps: true
 

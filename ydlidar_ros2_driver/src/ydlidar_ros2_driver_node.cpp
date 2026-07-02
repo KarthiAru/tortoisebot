@@ -1,4 +1,4 @@
-﻿/*
+/*
  *  YDLIDAR SYSTEM
  *  YDLIDAR ROS 2 Node
  *
@@ -149,6 +149,10 @@ int main(int argc, char *argv[]) {
   node->declare_parameter<bool>("invalid_range_is_inf");
   node->get_parameter("invalid_range_is_inf", invalid_range_is_inf);
 
+  bool disable_point_timestamps = true;
+  node->declare_parameter<bool>("disable_point_timestamps");
+  node->get_parameter("disable_point_timestamps", disable_point_timestamps);
+
 
   bool ret = laser.initialize();
   if (ret) {
@@ -196,7 +200,11 @@ int main(int argc, char *argv[]) {
       scan_msg->angle_max = scan.config.max_angle;
       scan_msg->angle_increment = scan.config.angle_increment;
       scan_msg->scan_time = scan.config.scan_time;
-      scan_msg->time_increment = scan.config.time_increment;
+      // The SDK points are re-binned into angle order below. For this hardware
+      // path, per-point times no longer reliably represent acquisition order,
+      // which causes Cartographer to drop "earlier" points. Treat the scan as
+      // instantaneous unless explicitly enabled for a driver/model that needs it.
+      scan_msg->time_increment = disable_point_timestamps ? 0.0 : scan.config.time_increment;
       scan_msg->range_min = scan.config.min_range;
       scan_msg->range_max = scan.config.max_range;
       
