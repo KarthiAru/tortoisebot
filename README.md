@@ -330,6 +330,27 @@ ros2 launch tortoisebot_bringup bringup.launch.py \
 Press `Ctrl+C` in the launch terminal. That stops the robot nodes and closes the
 MCAP bag cleanly.
 
+Before powering off the Raspberry Pi or removing the SD card, verify the latest
+bag and flush filesystem writes:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+LATEST=$(ls -td ~/tortoisebot_mcap/tortoisebot_hardware_* | head -1)
+ros2 bag info "$LATEST"
+sync
+```
+
+If `ros2 bag info` succeeds, the bag is readable at that moment. `sync` makes
+Linux flush pending writes to the SD card. After that, shut down cleanly:
+
+```bash
+sudo shutdown -h now
+```
+
+Wait until the Pi is halted before removing power or extracting the SD card.
+
 ### 4.4 Verify Robot Topics
 
 Use a second SSH terminal while the launch is running:
@@ -437,6 +458,11 @@ Copy a bag from the Pi to a PC:
 ```bash
 scp -r tortoisebot@<ROBOT_IP>:~/tortoisebot_mcap/tortoisebot_hardware_<timestamp> ./
 ```
+
+Prefer copying over SSH when possible. If you extract logs from the SD card,
+always run the stop/verify/`sync` sequence above before shutdown; otherwise the
+MCAP file may be missing its final footer/index and Foxglove may report it as
+malformed.
 
 ### 4.6 Troubleshooting
 
