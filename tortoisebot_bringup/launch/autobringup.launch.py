@@ -122,6 +122,7 @@ def generate_launch_description():
         parameters=[{
             'width': 640,
             'height': 480,
+            'format': 'RGB888',
             'frame_id': 'camera_link',
         }],
         remappings=[
