@@ -93,6 +93,7 @@ source "${CONFIG_FILE}"
 : "${CACHE_DIR:=${HOME}/.cache/tortoisebot}"
 : "${OUTPUT_DIR:=${REPO_ROOT}/provisioning/output}"
 : "${MAX_DEVICE_SIZE_GB:=128}"
+: "${FOXGLOVE_DEVICE_TOKEN:=}"
 
 info() {
   echo "==> $*"
@@ -278,6 +279,50 @@ ensure_user() {
   printf '%s:%s\n' "${uid}" "${gid}"
 }
 
+quote_shell_value() {
+  local value="$1"
+  printf "'"
+  printf "%s" "${value}" | sed "s/'/'\\''/g"
+  printf "'"
+}
+
+persist_foxglove_token() {
+  local root="$1"
+  local user="$2"
+  local uid="$3"
+  local gid="$4"
+  local token="$5"
+  local home_dir="${root}/home/${user}"
+  local env_dir="${home_dir}/.config/tortoisebot"
+  local env_file="${env_dir}/foxglove.env"
+  local bashrc="${home_dir}/.bashrc"
+
+  if [[ -z "${token}" ]]; then
+    return
+  fi
+
+  info "Persisting Foxglove device token for ${user}"
+  install -d -m 0700 -o "${uid}" -g "${gid}" "${env_dir}"
+  {
+    printf 'export FOXGLOVE_DEVICE_TOKEN='
+    quote_shell_value "${token}"
+    printf '\n'
+  } > "${env_file}"
+  chown "${uid}:${gid}" "${env_file}"
+  chmod 0600 "${env_file}"
+
+  if ! grep -qF '. "$HOME/.config/tortoisebot/foxglove.env"' "${bashrc}"; then
+    cat >> "${bashrc}" <<'BASHRC_FOXGLOVE'
+
+# TortoiseBot Foxglove remote access token
+if [ -f "$HOME/.config/tortoisebot/foxglove.env" ]; then
+  . "$HOME/.config/tortoisebot/foxglove.env"
+fi
+BASHRC_FOXGLOVE
+    chown "${uid}:${gid}" "${bashrc}"
+  fi
+}
+
 ssh_key="$(read_public_key | tr -d '\r' | head -n 1)"
 [[ "${ssh_key}" =~ ^ssh-(ed25519|rsa|ecdsa)[[:space:]]+[^[:space:]]+ ]] || die "SSH key does not look like an OpenSSH public key."
 
@@ -350,6 +395,8 @@ printf '%s
 chown -R "${user_uid}:${user_gid}" "${ROOT_MOUNT}/home/${USERNAME}/.ssh"
 chmod 0700 "${ROOT_MOUNT}/home/${USERNAME}/.ssh"
 chmod 0600 "${ROOT_MOUNT}/home/${USERNAME}/.ssh/authorized_keys"
+
+persist_foxglove_token "${ROOT_MOUNT}" "${USERNAME}" "${user_uid}" "${user_gid}" "${FOXGLOVE_DEVICE_TOKEN}"
 
 cat > "${ROOT_MOUNT}/etc/sudoers.d/90-tortoisebot" <<SUDOERS
 ${USERNAME} ALL=(ALL) NOPASSWD:ALL

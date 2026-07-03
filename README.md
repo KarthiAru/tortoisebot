@@ -310,6 +310,30 @@ ros2 launch tortoisebot_bringup bringup.launch.py \
   enable_foxglove_bridge:=True
 ```
 
+For Foxglove web access through the Foxglove cloud/device system, persist a
+device token on the Pi first, then add `foxglove_remote_access:=True`:
+
+```bash
+mkdir -p ~/.config/tortoisebot
+cat > ~/.config/tortoisebot/foxglove.env <<'EOF'
+export FOXGLOVE_DEVICE_TOKEN='fox_dt_...'
+EOF
+chmod 600 ~/.config/tortoisebot/foxglove.env
+grep -qxF '. "$HOME/.config/tortoisebot/foxglove.env"' ~/.bashrc || \
+  echo '. "$HOME/.config/tortoisebot/foxglove.env"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+```bash
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_foxglove_bridge:=True \
+  foxglove_remote_access:=True
+```
+
 The Raspberry Pi CSI camera uses `camera_ros`/libcamera by default. The launch
 keeps the raw image available for live debugging and publishes optimized
 Foxglove-friendly topics:
@@ -358,7 +382,7 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
 #### Foxglove Live Connection and Teleop
 
 Use Foxglove WebSocket, not Rosbridge, for live ROS 2 data and publishing.
-Start the bridge with the main launch:
+For same-Wi-Fi control, start the bridge with the main launch:
 
 ```bash
 ros2 launch tortoisebot_bringup bringup.launch.py \
@@ -380,6 +404,31 @@ Example:
 ```text
 ws://192.168.0.117:8765
 ```
+
+For Foxglove web/cloud remote access, create a Foxglove device token, persist it
+on the Pi, and launch with remote access enabled:
+
+```bash
+mkdir -p ~/.config/tortoisebot
+cat > ~/.config/tortoisebot/foxglove.env <<'EOF'
+export FOXGLOVE_DEVICE_TOKEN='fox_dt_...'
+EOF
+chmod 600 ~/.config/tortoisebot/foxglove.env
+grep -qxF '. "$HOME/.config/tortoisebot/foxglove.env"' ~/.bashrc || \
+  echo '. "$HOME/.config/tortoisebot/foxglove.env"' >> ~/.bashrc
+source ~/.bashrc
+
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_foxglove_bridge:=True \
+  foxglove_remote_access:=True
+```
+
+When remote access is enabled, connect from the Foxglove web app through the
+registered device instead of opening `ws://<ROBOT_IP>:8765` directly.
 
 Add a **Teleop** panel and configure it:
 
@@ -615,7 +664,8 @@ source ~/tb_ws/install/setup.bash
 
 #### Foxglove Cannot Connect
 
-Make sure Foxglove Bridge was enabled and is listening on the robot:
+For same-Wi-Fi WebSocket access, make sure Foxglove Bridge was enabled and is
+listening on the robot:
 
 ```bash
 ros2 node list | grep foxglove
@@ -630,6 +680,15 @@ ws://<ROBOT_IP>:8765
 
 Use `ws://localhost:8765` only when the bridge is running on the same computer
 as Foxglove.
+
+For Foxglove remote access, check that the persisted token is loaded and that
+remote access was enabled:
+
+```bash
+source ~/.config/tortoisebot/foxglove.env
+test -n "$FOXGLOVE_DEVICE_TOKEN" && echo "token loaded"
+ros2 param get /foxglove_bridge remote_access
+```
 
 #### Robot Moves Manually But Does Not Avoid Obstacles
 
@@ -766,8 +825,10 @@ cp provisioning/config/tortoisebot-image.example.env provisioning/config/tortois
 nano provisioning/config/tortoisebot-image.local.env
 ```
 
-Set Wi-Fi, SSH key, repo URL, and branch in the local env file. Then build and
-flash the card:
+Set Wi-Fi, SSH key, repo URL, branch, and optionally
+`FOXGLOVE_DEVICE_TOKEN` in the local env file. When set, the token is written to
+`~/.config/tortoisebot/foxglove.env` on the Pi with `0600` permissions and is
+loaded by future SSH sessions. Then build and flash the card:
 
 ```bash
 lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINTS

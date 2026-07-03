@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 
 
 def generate_launch_description():
@@ -32,6 +32,8 @@ def generate_launch_description():
     enable_camera = LaunchConfiguration('enable_camera')
     enable_image_optimizer = LaunchConfiguration('enable_image_optimizer')
     enable_foxglove_bridge = LaunchConfiguration('enable_foxglove_bridge')
+    foxglove_remote_access = LaunchConfiguration('foxglove_remote_access')
+    foxglove_device_token = LaunchConfiguration('foxglove_device_token')
     image_downsample_width = LaunchConfiguration('image_downsample_width')
     image_downsample_height = LaunchConfiguration('image_downsample_height')
     bag_dir = LaunchConfiguration('bag_dir')
@@ -60,6 +62,11 @@ def generate_launch_description():
                               description='Publish mono8 optimized camera topics when use_sim_time=False'),
         DeclareLaunchArgument('enable_foxglove_bridge', default_value='False',
                               description='Expose live ROS data and client publishing over Foxglove WebSocket'),
+        DeclareLaunchArgument('foxglove_remote_access', default_value='False',
+                              description='Connect Foxglove Bridge to Foxglove remote access'),
+        DeclareLaunchArgument('foxglove_device_token',
+                              default_value=EnvironmentVariable('FOXGLOVE_DEVICE_TOKEN', default_value=''),
+                              description='Foxglove device token for remote access'),
         DeclareLaunchArgument('image_downsample_width', default_value='320',
                               description='Width for /camera/image_mono_downsampled'),
         DeclareLaunchArgument('image_downsample_height', default_value='240',
@@ -83,6 +90,8 @@ def generate_launch_description():
                 'enable_camera': enable_camera,
                 'enable_image_optimizer': enable_image_optimizer,
                 'enable_foxglove_bridge': enable_foxglove_bridge,
+                'foxglove_remote_access': foxglove_remote_access,
+                'foxglove_device_token': foxglove_device_token,
                 'image_downsample_width': image_downsample_width,
                 'image_downsample_height': image_downsample_height,
                 'bag_dir': bag_dir,
