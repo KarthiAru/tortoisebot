@@ -31,6 +31,7 @@ def generate_launch_description():
     enable_imu = LaunchConfiguration('enable_imu')
     enable_camera = LaunchConfiguration('enable_camera')
     enable_image_optimizer = LaunchConfiguration('enable_image_optimizer')
+    enable_foxglove_bridge = LaunchConfiguration('enable_foxglove_bridge')
     image_downsample_width = LaunchConfiguration('image_downsample_width')
     image_downsample_height = LaunchConfiguration('image_downsample_height')
     bag_dir = LaunchConfiguration('bag_dir')
@@ -57,6 +58,8 @@ def generate_launch_description():
                               description='Start the camera node when use_sim_time=False'),
         DeclareLaunchArgument('enable_image_optimizer', default_value='True',
                               description='Publish mono8 optimized camera topics when use_sim_time=False'),
+        DeclareLaunchArgument('enable_foxglove_bridge', default_value='False',
+                              description='Expose live ROS data and client publishing over Foxglove WebSocket'),
         DeclareLaunchArgument('image_downsample_width', default_value='320',
                               description='Width for /camera/image_mono_downsampled'),
         DeclareLaunchArgument('image_downsample_height', default_value='240',
@@ -79,6 +82,7 @@ def generate_launch_description():
                 'enable_imu': enable_imu,
                 'enable_camera': enable_camera,
                 'enable_image_optimizer': enable_image_optimizer,
+                'enable_foxglove_bridge': enable_foxglove_bridge,
                 'image_downsample_width': image_downsample_width,
                 'image_downsample_height': image_downsample_height,
                 'bag_dir': bag_dir,

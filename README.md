@@ -59,6 +59,7 @@ sudo apt install \
   ros-humble-ros2bag \
   ros-humble-rosbag2-storage-mcap \
   ros-humble-rosbag2-transport \
+  ros-humble-foxglove-bridge \
   ros-humble-v4l2-camera \
   ros-humble-image-transport-plugins \
   ros-humble-ros-gz-bridge \
@@ -298,6 +299,17 @@ ros2 launch tortoisebot_bringup bringup.launch.py \
   enable_camera:=True
 ```
 
+Add Foxglove Bridge when you want live visualization or Foxglove teleop:
+
+```bash
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_foxglove_bridge:=True
+```
+
 The Raspberry Pi CSI camera uses `camera_ros`/libcamera by default. The launch
 keeps the raw image available for live debugging and publishes optimized
 Foxglove-friendly topics:
@@ -324,6 +336,133 @@ ros2 launch tortoisebot_bringup bringup.launch.py \
   camera_driver:=v4l2 \
   camera_device:=/dev/video0
 ```
+
+#### Manual Teleop from SSH
+
+Use keyboard teleop only in open space. It publishes directly to `/cmd_vel`, so
+it bypasses Nav2 costmaps and does not avoid obstacles.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+```
+
+Stop manual motion with `k`, `Ctrl+C`, or an explicit zero velocity:
+
+```bash
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist '{}'
+```
+
+#### Foxglove Live Connection and Teleop
+
+Use Foxglove WebSocket, not Rosbridge, for live ROS 2 data and publishing.
+Start the bridge with the main launch:
+
+```bash
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=True \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_foxglove_bridge:=True
+```
+
+In Foxglove on your PC:
+
+```text
+Open connection -> Foxglove WebSocket -> ws://<ROBOT_IP>:8765
+```
+
+Example:
+
+```text
+ws://192.168.0.117:8765
+```
+
+Add a **Teleop** panel and configure it:
+
+```text
+Topic: /cmd_vel
+Schema: geometry_msgs/msg/Twist
+Publish rate: 5 Hz
+Stop on release: enabled
+Up:    linear.x  = 0.08
+Down:  linear.x  = -0.05
+Left:  angular.z = 0.45
+Right: angular.z = -0.45
+Stop:  all Twist fields = 0
+```
+
+Foxglove teleop is also direct `/cmd_vel` control. Do not use it at the same
+time as keyboard teleop or while Nav2 is actively executing a goal.
+
+#### Autonomous Mapping with Collision Avoidance
+
+`exploration:=True` starts Cartographer SLAM and Nav2 in SLAM mode. Nav2 uses
+`/scan` in the local and global costmaps to plan around obstacles. This is
+collision-aware only when you send Nav2 goals; manual `/cmd_vel` teleop is not
+collision-aware.
+
+Before sending goals, verify the stack:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+ros2 topic list | grep -E '^/scan$|^/map$|^/tf$|^/cmd_vel$'
+ros2 topic hz /scan
+ros2 lifecycle nodes
+```
+
+From RViz on a remote Ubuntu PC, set the fixed frame to `map`, display `/map`,
+`/scan`, `TF`, the robot model, and costmaps, then use **2D Nav Goal**. Send
+short goals into visible free space and let Cartographer grow the map as the
+robot moves.
+
+Foxglove is useful for watching `/map`, `/scan`, `/tf`, `/cmd_vel`, and
+`/camera/image_mono_downsampled`; use RViz or another Nav2-compatible goal tool
+for collision-aware navigation goals.
+
+#### Save the Map
+
+After mapping, save the current map:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+mkdir -p ~/tb_ws/maps
+ros2 run nav2_map_server map_saver_cli \
+  -f ~/tb_ws/maps/tortoisebot_map \
+  --ros-args -p use_sim_time:=false
+```
+
+This creates:
+
+```text
+~/tb_ws/maps/tortoisebot_map.yaml
+~/tb_ws/maps/tortoisebot_map.pgm
+```
+
+#### Map-Based Navigation on a Saved Map
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/tb_ws/install/setup.bash
+
+ros2 launch tortoisebot_bringup bringup.launch.py \
+  use_sim_time:=False \
+  exploration:=False \
+  map_file:=/home/tortoisebot/tb_ws/maps/tortoisebot_map.yaml \
+  record_mcap:=True \
+  enable_camera:=True \
+  enable_foxglove_bridge:=True
+```
+
+Set the initial pose if AMCL needs help, then send Nav2 goals. As with SLAM
+mode, obstacle avoidance comes from Nav2 costmaps fed by `/scan`.
 
 #### Stop Robot and Logging
 
@@ -370,6 +509,7 @@ Expected important topics:
 
 ```text
 /scan
+/map
 /camera/image_raw
 /camera/image_mono
 /camera/image_mono_downsampled
@@ -472,6 +612,30 @@ malformed.
 source /opt/ros/humble/setup.bash
 source ~/tb_ws/install/setup.bash
 ```
+
+#### Foxglove Cannot Connect
+
+Make sure Foxglove Bridge was enabled and is listening on the robot:
+
+```bash
+ros2 node list | grep foxglove
+ss -ltnp | grep 8765
+```
+
+In Foxglove, choose **Foxglove WebSocket** and use:
+
+```text
+ws://<ROBOT_IP>:8765
+```
+
+Use `ws://localhost:8765` only when the bridge is running on the same computer
+as Foxglove.
+
+#### Robot Moves Manually But Does Not Avoid Obstacles
+
+Keyboard teleop and Foxglove Teleop publish directly to `/cmd_vel`. This is
+expected and bypasses Nav2. For obstacle avoidance, stop teleop and send goals
+through Nav2 while `exploration:=True` or `exploration:=False` is running.
 
 #### Only `/rosout` and `/parameter_events` Are Visible
 
