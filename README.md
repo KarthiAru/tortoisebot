@@ -591,11 +591,28 @@ message fields, not ROS topics.
 
 ### 4.5 MCAP Logging for Foxglove
 
-The hardware recorder uses ROS 2 `rosbag2` with MCAP storage:
+The hardware recorder uses ROS 2 `rosbag2` with MCAP storage and a package-installed MCAP writer config:
 
 ```bash
-ros2 bag record --storage mcap ...
+ros2 bag record --storage mcap --storage-config-file <mcap_writer_options.yaml> ...
 ```
+
+The default writer config is installed from:
+
+```text
+tortoisebot_bringup/config/mcap_writer_options.yaml
+```
+
+Current defaults:
+
+```yaml
+noChunking: false
+chunkSize: 786432
+compression: "Lz4"
+compressionLevel: "Fastest"
+```
+
+This writes indexed, chunked MCAP files with low-CPU LZ4 chunk compression. MCAP chunk compression is a file-storage setting; it does not create ROS image-transport topics by itself. The recorder also explicitly records `/camera/image_raw/compressed` when that topic is published, alongside the optimized `/camera/image_mono_downsampled` stream.
 
 The launch records to:
 
@@ -618,6 +635,7 @@ find "$LATEST" -name '*.mcap' -ls
 Expected non-zero message counts:
 
 ```text
+/camera/image_raw/compressed
 /camera/image_mono_downsampled
 /camera/camera_info
 /scan

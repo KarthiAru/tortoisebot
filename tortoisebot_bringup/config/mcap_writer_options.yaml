@@ -1,0 +1,13 @@
+# MCAP writer options for TortoiseBot hardware logging.
+#
+# LZ4 keeps CPU cost low on Raspberry Pi while still writing chunked,
+# compressed MCAP files with indexes for efficient Foxglove/Atlas playback.
+noChunking: false
+noMessageIndex: false
+noSummary: false
+noChunkCRC: true
+noSummaryCRC: false
+chunkSize: 786432
+compression: "Lz4"
+compressionLevel: "Fastest"
+forceCompression: false
