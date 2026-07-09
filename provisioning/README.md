@@ -4,6 +4,8 @@ Use Ubuntu Server 22.04 LTS 64-bit for Raspberry Pi as the base image. ROS 2 Hum
 
 The recommended workflow now runs on an Ubuntu/Linux machine. It edits the Raspberry Pi image root filesystem directly, so user login, SSH, Wi-Fi, and the manual installer are present before the card ever boots. The old Windows workflow is deprecated because Windows cannot reliably edit the Linux ext4 root partition on the SD card.
 
+For the longer-term YARI OS user experience, the image should not require Wi-Fi credentials at flash time. It should boot into a setup access point, expose a local web setup page, store credentials on the device, and reconnect on reboot. See [YARI OS Device Onboarding](yari-os-onboarding.md).
+
 ## Ubuntu Image Builder
 
 Install host tools on the Ubuntu machine:
@@ -20,7 +22,7 @@ cp provisioning/config/tortoisebot-image.example.env provisioning/config/tortois
 nano provisioning/config/tortoisebot-image.local.env
 ```
 
-Fill in Wi-Fi, hostname, username/password, repo URL, and branch. The `.local.env` file is ignored by Git so credentials stay private.
+Fill in hostname, username/password, repo URL, and branch. Wi-Fi is optional: leave `WIFI_SSID` and `WIFI_PASSWORD` blank to use the first-boot YARI setup access point at `http://192.168.4.1`. The `.local.env` file is ignored by Git so credentials stay private.
 
 Build a configured image without flashing:
 
@@ -60,7 +62,22 @@ The Ubuntu builder mounts the image partitions and writes directly into the root
 
 It also writes minimal `user-data`, `meta-data`, and `network-config` to the boot partition for compatibility with Ubuntu Raspberry Pi images, but login does not depend on cloud-init creating the user.
 
+Wi-Fi can still be baked into the image as a development convenience. If `WIFI_SSID` and `WIFI_PASSWORD` are blank, the image installs the YARI onboarding service. On boot, if no network connection is available, the device attempts to start setup AP `YARI-<hostname>` and serves a local setup page at `http://192.168.4.1`. The first implementation prefers NetworkManager hotspot mode for AP fallback and falls back to `wpa_supplicant` plus `systemd-networkd` DHCP on Ubuntu Server style images.
+
 ## First Boot and Manual Install
+
+### First-Boot Setup AP
+
+If no Wi-Fi credentials were baked into the image, or if the configured network is unavailable, the onboarding service attempts to start a setup access point:
+
+| Setting | Value |
+|---|---|
+| SSID | `YARI-<hostname>` |
+| URL | `http://192.168.4.1` |
+
+Connect your laptop/phone to that access point, open the URL, enter Wi-Fi credentials, and save. The device writes persistent network configuration and reboots.
+
+The first implementation prefers NetworkManager (`nmcli`) for AP mode and falls back to `wpa_supplicant` AP mode with `systemd-networkd` DHCP. If neither backend is available, the service records a clear error in `/var/lib/yari/onboarding/state.json`.
 
 Insert the card into the Raspberry Pi and boot it. The base system should join Wi-Fi and allow SSH with the configured user.
 

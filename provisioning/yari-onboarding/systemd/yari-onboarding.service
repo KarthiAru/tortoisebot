@@ -1,0 +1,14 @@
+[Unit]
+Description=YARI first-boot network onboarding
+Wants=network-online.target
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/yari/onboarding.env
+ExecStart=/usr/local/sbin/yari-onboarding serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -82,8 +82,8 @@ fi
 # shellcheck source=/dev/null
 source "${CONFIG_FILE}"
 
-: "${WIFI_SSID:?Set WIFI_SSID in ${CONFIG_FILE}}"
-: "${WIFI_PASSWORD:?Set WIFI_PASSWORD in ${CONFIG_FILE}}"
+: "${WIFI_SSID:=}"
+: "${WIFI_PASSWORD:=}"
 : "${HOSTNAME:=tortoisebot}"
 : "${USERNAME:=tortoisebot}"
 : "${USER_PASSWORD:=raspberry}"
@@ -94,6 +94,9 @@ source "${CONFIG_FILE}"
 : "${OUTPUT_DIR:=${REPO_ROOT}/provisioning/output}"
 : "${MAX_DEVICE_SIZE_GB:=128}"
 : "${FOXGLOVE_DEVICE_TOKEN:=}"
+: "${YARI_ONBOARDING_ENABLED:=1}"
+: "${YARI_ONBOARDING_AP_PASSWORD:=}"
+: "${YARI_ONBOARDING_CONNECTIVITY_TIMEOUT:=45}"
 
 info() {
   echo "==> $*"
@@ -431,9 +434,11 @@ PubkeyAuthentication yes
 SSHD_CONFIG
 fi
 
-info "Writing Wi-Fi netplan into rootfs and boot NoCloud seed"
+info "Writing network config and YARI onboarding files"
 install -d "${ROOT_MOUNT}/etc/netplan"
-cat > "${ROOT_MOUNT}/etc/netplan/99-tortoisebot-wifi.yaml" <<NETPLAN
+rm -f "${ROOT_MOUNT}/etc/netplan/50-cloud-init.yaml" "${ROOT_MOUNT}/etc/netplan/99-tortoisebot-wifi.yaml"
+if [[ -n "${WIFI_SSID}" && -n "${WIFI_PASSWORD}" ]]; then
+  cat > "${ROOT_MOUNT}/etc/netplan/01-tortoisebot-wifi.yaml" <<NETPLAN
 network:
   version: 2
   ethernets:
@@ -448,14 +453,18 @@ network:
         "${WIFI_SSID}":
           password: "${WIFI_PASSWORD}"
 NETPLAN
-chmod 0600 "${ROOT_MOUNT}/etc/netplan/99-tortoisebot-wifi.yaml"
+  chmod 0600 "${ROOT_MOUNT}/etc/netplan/01-tortoisebot-wifi.yaml"
+else
+  info "No WIFI_SSID/WIFI_PASSWORD provided; first boot will use YARI onboarding AP fallback"
+fi
 
 install -d "${ROOT_MOUNT}/etc/cloud/cloud.cfg.d"
-cat > "${ROOT_MOUNT}/etc/cloud/cloud.cfg.d/99-tortoisebot-disable-network-config.cfg" <<CLOUD_NETWORK
+cat > "${ROOT_MOUNT}/etc/cloud/cloud.cfg.d/99-yari-disable-network-config.cfg" <<CLOUD_NETWORK
 network: {config: disabled}
 CLOUD_NETWORK
 
-cat > "${BOOT_MOUNT}/network-config" <<NETPLAN
+if [[ -n "${WIFI_SSID}" && -n "${WIFI_PASSWORD}" ]]; then
+  cat > "${BOOT_MOUNT}/network-config" <<NETPLAN
 version: 2
 ethernets:
   eth0:
@@ -469,6 +478,33 @@ wifis:
       "${WIFI_SSID}":
         password: "${WIFI_PASSWORD}"
 NETPLAN
+else
+  cat > "${BOOT_MOUNT}/network-config" <<NETPLAN
+version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+    optional: true
+NETPLAN
+fi
+
+if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "true" || "${YARI_ONBOARDING_ENABLED}" == "True" ]]; then
+  install -d "${ROOT_MOUNT}/usr/local/sbin" "${ROOT_MOUNT}/opt/yari/onboarding/web" "${ROOT_MOUNT}/etc/systemd/system" "${ROOT_MOUNT}/etc/yari" "${ROOT_MOUNT}/var/lib/yari/onboarding"
+  install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-onboarding" "${ROOT_MOUNT}/usr/local/sbin/yari-onboarding"
+  install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/yari-onboarding.service" "${ROOT_MOUNT}/etc/systemd/system/yari-onboarding.service"
+  cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  cat > "${ROOT_MOUNT}/etc/yari/onboarding.env" <<ONBOARDING_ENV
+YARI_ONBOARDING_WIFI_IFACE=wlan0
+YARI_ONBOARDING_AP_ADDR=192.168.4.1
+YARI_ONBOARDING_AP_SSID=YARI-${HOSTNAME}
+YARI_ONBOARDING_AP_PASSWORD=${YARI_ONBOARDING_AP_PASSWORD}
+YARI_ONBOARDING_CONNECTIVITY_TIMEOUT=${YARI_ONBOARDING_CONNECTIVITY_TIMEOUT}
+YARI_ONBOARDING_REBOOT_AFTER_SAVE=1
+ONBOARDING_ENV
+  chmod 0600 "${ROOT_MOUNT}/etc/yari/onboarding.env"
+  install -d "${ROOT_MOUNT}/etc/systemd/system/multi-user.target.wants"
+  ln -sf "../yari-onboarding.service" "${ROOT_MOUNT}/etc/systemd/system/multi-user.target.wants/yari-onboarding.service"
+fi
 
 cat > "${BOOT_MOUNT}/meta-data" <<META
 instance-id: tortoisebot-${HOSTNAME}-ubuntu-image

@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import re
+import secrets
+import socket
+import subprocess
+import sys
+import threading
+import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+STATE_DIR = Path(os.environ.get("YARI_ONBOARDING_STATE_DIR", "/var/lib/yari/onboarding"))
+STATE_FILE = STATE_DIR / "state.json"
+COMPLETE_FILE = STATE_DIR / "complete"
+WEB_DIR = Path(os.environ.get("YARI_ONBOARDING_WEB_DIR", "/opt/yari/onboarding/web"))
+DEVICE_CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
+NETPLAN_DIR = Path(os.environ.get("YARI_ONBOARDING_NETPLAN_DIR", "/etc/netplan"))
+CLOUD_CFG_DIR = Path(os.environ.get("YARI_ONBOARDING_CLOUD_CFG_DIR", "/etc/cloud/cloud.cfg.d"))
+HOSTNAME_FILE = Path(os.environ.get("YARI_ONBOARDING_HOSTNAME_FILE", "/etc/hostname"))
+APPLY_NETWORK = os.environ.get("YARI_ONBOARDING_APPLY_NETWORK", "1") not in {"0", "false", "False"}
+AP_IFACE = os.environ.get("YARI_ONBOARDING_WIFI_IFACE", "wlan0")
+AP_ADDR = os.environ.get("YARI_ONBOARDING_AP_ADDR", "192.168.4.1")
+AP_PREFIX = os.environ.get("YARI_ONBOARDING_AP_PREFIX", "24")
+AP_SSID_PREFIX = os.environ.get("YARI_ONBOARDING_AP_SSID_PREFIX", "YARI")
+AP_PASSWORD = os.environ.get("YARI_ONBOARDING_AP_PASSWORD", "")
+CONNECTIVITY_TIMEOUT = int(os.environ.get("YARI_ONBOARDING_CONNECTIVITY_TIMEOUT", "45"))
+HTTP_PORT = int(os.environ.get("YARI_ONBOARDING_HTTP_PORT", "80"))
+REBOOT_AFTER_SAVE = os.environ.get("YARI_ONBOARDING_REBOOT_AFTER_SAVE", "1") not in {"0", "false", "False"}
+
+
+def run(args, check=False, capture=True):
+    kwargs = {"text": True}
+    if capture:
+        kwargs.update({"stdout": subprocess.PIPE, "stderr": subprocess.PIPE})
+    result = subprocess.run(args, **kwargs)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"Command failed: {' '.join(args)}\n{result.stderr.strip() if result.stderr else ''}")
+    return result
+
+
+def has_command(name):
+    return run(["/usr/bin/env", "sh", "-lc", f"command -v {name}"], capture=True).returncode == 0
+
+
+def device_id():
+    for candidate in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
+        try:
+            value = candidate.read_text().strip()
+            if value:
+                return value[:8]
+        except FileNotFoundError:
+            pass
+    return secrets.token_hex(4)
+
+
+def ap_ssid():
+    return os.environ.get("YARI_ONBOARDING_AP_SSID", f"{AP_SSID_PREFIX}-{device_id()}")
+
+
+def current_state(extra=None):
+    payload = {
+        "device_id": device_id(),
+        "ap_ssid": ap_ssid(),
+        "ap_url": f"http://{AP_ADDR}",
+        "wifi_iface": AP_IFACE,
+        "networkmanager": has_command("nmcli"),
+        "complete": COMPLETE_FILE.exists(),
+        "hostname": socket.gethostname(),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def write_state(payload):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def has_connectivity():
+    checks = [
+        ["/usr/bin/env", "sh", "-lc", "ip -4 addr show scope global | grep -q inet"],
+        ["/usr/bin/env", "sh", "-lc", "ip route | grep -q '^default'"],
+    ]
+    return all(run(command, capture=True).returncode == 0 for command in checks)
+
+
+def wait_for_connectivity(timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if has_connectivity():
+            return True
+        time.sleep(2)
+    return has_connectivity()
+
+
+def ensure_ap():
+    if has_command("nmcli"):
+        ensure_ap_networkmanager()
+        return
+    ensure_ap_wpa_supplicant()
+
+
+def ensure_ap_networkmanager():
+    ssid = ap_ssid()
+    existing = run(["nmcli", "-t", "-f", "NAME", "connection", "show"], capture=True).stdout.splitlines()
+    if "yari-setup-ap" in existing:
+        run(["nmcli", "connection", "delete", "yari-setup-ap"], capture=True)
+    run(["nmcli", "connection", "add", "type", "wifi", "ifname", AP_IFACE, "con-name", "yari-setup-ap", "autoconnect", "no", "ssid", ssid], check=True)
+    run(["nmcli", "connection", "modify", "yari-setup-ap", "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "ipv4.method", "shared", "ipv4.addresses", f"{AP_ADDR}/{AP_PREFIX}", "ipv6.method", "ignore"], check=True)
+    if AP_PASSWORD:
+        run(["nmcli", "connection", "modify", "yari-setup-ap", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", AP_PASSWORD], check=True)
+    run(["nmcli", "connection", "up", "yari-setup-ap"], check=True)
+    write_state(current_state({"mode": "setup-ap", "ap_backend": "networkmanager", "ap_security": "wpa-psk" if AP_PASSWORD else "open"}))
+
+
+def ensure_ap_wpa_supplicant():
+    missing = [name for name in ("wpa_supplicant", "ip", "systemctl") if not has_command(name)]
+    if missing:
+        message = f"Missing AP fallback tools: {', '.join(missing)}"
+        write_state(current_state({"mode": "error", "error": message}))
+        raise RuntimeError(message)
+
+    runtime = Path("/run/yari-onboarding")
+    runtime.mkdir(parents=True, exist_ok=True)
+    wpa_conf = runtime / "wpa_supplicant-ap.conf"
+    networkd_conf = Path(f"/run/systemd/network/80-yari-{AP_IFACE}-ap.network")
+    networkd_conf.parent.mkdir(parents=True, exist_ok=True)
+
+    ssid = ap_ssid().replace('"', '\\"')
+    lines = ["ctrl_interface=/run/wpa_supplicant", "ap_scan=2", "network={", f"    ssid=\"{ssid}\"", "    mode=2", "    frequency=2412"]
+    if AP_PASSWORD:
+        password = AP_PASSWORD.replace('"', '\\"')
+        lines.extend(["    key_mgmt=WPA-PSK", f"    psk=\"{password}\""])
+        security = "wpa-psk"
+    else:
+        lines.append("    key_mgmt=NONE")
+        security = "open"
+    lines.append("}")
+    wpa_conf.write_text("\n".join(lines) + "\n")
+    os.chmod(wpa_conf, 0o600)
+
+    networkd_conf.write_text("\n".join([
+        "[Match]",
+        f"Name={AP_IFACE}",
+        "",
+        "[Network]",
+        f"Address={AP_ADDR}/{AP_PREFIX}",
+        "DHCPServer=yes",
+        "IPMasquerade=ipv4",
+        "",
+        "[DHCPServer]",
+        "PoolOffset=20",
+        "PoolSize=180",
+        "EmitDNS=yes",
+        f"DNS={AP_ADDR}",
+        "",
+    ]))
+
+    run(["systemctl", "stop", f"wpa_supplicant@{AP_IFACE}.service"], capture=True)
+    run(["/usr/bin/env", "sh", "-lc", f"pkill -f 'wpa_supplicant.*-i ?{AP_IFACE}' || true"], capture=True)
+    run(["ip", "link", "set", AP_IFACE, "down"], capture=True)
+    run(["ip", "addr", "flush", "dev", AP_IFACE], capture=True)
+    run(["ip", "link", "set", AP_IFACE, "up"], check=True)
+    run(["wpa_supplicant", "-B", "-i", AP_IFACE, "-c", str(wpa_conf), "-D", "nl80211"], check=True)
+    run(["systemctl", "restart", "systemd-networkd"], capture=True)
+    run(["ip", "addr", "replace", f"{AP_ADDR}/{AP_PREFIX}", "dev", AP_IFACE], capture=True)
+    write_state(current_state({"mode": "setup-ap", "ap_backend": "wpa_supplicant-networkd", "ap_security": security}))
+
+
+def write_netplan(ssid, password):
+    netplan = NETPLAN_DIR / "01-yari-wifi.yaml"
+    netplan.parent.mkdir(parents=True, exist_ok=True)
+    escaped_ssid = ssid.replace('"', '\\"')
+    escaped_password = password.replace('"', '\\"')
+    content = (
+        "network:\n"
+        "  version: 2\n"
+        "  renderer: networkd\n"
+        "  ethernets:\n"
+        "    eth0:\n"
+        "      dhcp4: true\n"
+        "      optional: true\n"
+        "  wifis:\n"
+        f"    {AP_IFACE}:\n"
+        "      dhcp4: true\n"
+        "      optional: true\n"
+        "      access-points:\n"
+        f"        \"{escaped_ssid}\":\n"
+        f"          password: \"{escaped_password}\"\n"
+    )
+    netplan.write_text(content)
+    os.chmod(netplan, 0o600)
+    cloud = CLOUD_CFG_DIR / "99-yari-disable-network-config.cfg"
+    cloud.parent.mkdir(parents=True, exist_ok=True)
+    cloud.write_text("network: {config: disabled}\n")
+
+
+def configure_wifi(ssid, password, hostname=""):
+    if not ssid or not password:
+        raise ValueError("ssid and password are required")
+    if hostname:
+        safe_hostname = re.sub(r"[^a-z0-9-]+", "-", hostname.strip().lower()).strip("-")
+        if safe_hostname:
+            HOSTNAME_FILE.parent.mkdir(parents=True, exist_ok=True)
+            HOSTNAME_FILE.write_text(safe_hostname + "\n")
+            if APPLY_NETWORK:
+                run(["hostnamectl", "set-hostname", safe_hostname], capture=True)
+    if has_command("nmcli") and APPLY_NETWORK:
+        run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
+        run(["nmcli", "connection", "add", "type", "wifi", "ifname", AP_IFACE, "con-name", "yari-wifi", "ssid", ssid], check=True)
+        run(["nmcli", "connection", "modify", "yari-wifi", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password, "connection.autoconnect", "yes"], check=True)
+    else:
+        write_netplan(ssid, password)
+        if APPLY_NETWORK:
+            run(["netplan", "generate"], check=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    COMPLETE_FILE.touch()
+    write_state(current_state({"mode": "configured", "configured_ssid": ssid}))
+
+
+def reboot_soon():
+    def delayed():
+        time.sleep(2)
+        run(["systemctl", "reboot"], capture=False)
+    threading.Thread(target=delayed, daemon=True).start()
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("yari-onboarding: " + fmt % args + "\n")
+
+    def send_json(self, code, payload):
+        body = json.dumps(payload, indent=2).encode("utf-8")
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if urlparse(self.path).path == "/api/status":
+            self.send_json(200, current_state())
+            return
+        super().do_GET()
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        length = int(self.headers.get("content-length", "0") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
+        except json.JSONDecodeError as exc:
+            self.send_json(400, {"ok": False, "error": f"invalid json: {exc}"})
+            return
+        if path == "/api/configure":
+            try:
+                configure_wifi(str(payload.get("ssid") or ""), str(payload.get("password") or ""), str(payload.get("hostname") or ""))
+                self.send_json(200, {"ok": True, "message": "Wi-Fi saved. Device will reboot." if REBOOT_AFTER_SAVE else "Wi-Fi saved."})
+                if REBOOT_AFTER_SAVE:
+                    reboot_soon()
+            except Exception as exc:
+                self.send_json(500, {"ok": False, "error": str(exc)})
+            return
+        if path == "/api/reboot":
+            self.send_json(200, {"ok": True, "message": "Rebooting."})
+            reboot_soon()
+            return
+        self.send_json(404, {"ok": False, "error": "not found"})
+
+
+def serve_http(label="YARI onboarding"):
+    server = ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), Handler)
+    print(f"{label} serving http://0.0.0.0:{HTTP_PORT}", flush=True)
+    server.serve_forever()
+
+
+def serve():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if wait_for_connectivity(CONNECTIVITY_TIMEOUT):
+        write_state(current_state({"mode": "client", "message": "network already connected"}))
+        return
+    ensure_ap()
+    serve_http(f"YARI onboarding setup AP {ap_ssid()}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="YARI first-boot network onboarding")
+    parser.add_argument("command", choices=["serve", "status", "ap", "web"], nargs="?", default="serve")
+    args = parser.parse_args()
+    if args.command == "status":
+        print(json.dumps(current_state(), indent=2))
+    elif args.command == "ap":
+        ensure_ap()
+    elif args.command == "web":
+        serve_http()
+    else:
+        serve()
+
+
+if __name__ == "__main__":
+    main()

@@ -833,6 +833,11 @@ The old Windows PowerShell flow is deprecated because Windows cannot reliably
 configure the Linux ext4 root partition with correct users, SSH keys, ownership,
 and permissions.
 
+Long term, TortoiseBot/YARI OS should not require Wi-Fi credentials while
+flashing. The target experience is a first-boot setup access point with a local
+web page, similar to a Wi-Fi router setup flow. See
+[`provisioning/yari-os-onboarding.md`](provisioning/yari-os-onboarding.md).
+
 On an Ubuntu development machine:
 
 ```bash
@@ -843,8 +848,7 @@ cp provisioning/config/tortoisebot-image.example.env provisioning/config/tortois
 nano provisioning/config/tortoisebot-image.local.env
 ```
 
-Set Wi-Fi, SSH key, repo URL, branch, and optionally
-`FOXGLOVE_DEVICE_TOKEN` in the local env file. When set, the token is written to
+Set SSH key, repo URL, branch, and optionally `FOXGLOVE_DEVICE_TOKEN` in the local env file. Wi-Fi is optional: leave `WIFI_SSID` and `WIFI_PASSWORD` blank to use the first-boot YARI setup access point at `http://192.168.4.1`. When set, the token is written to
 `~/.config/tortoisebot/foxglove.env` on the Pi with `0600` permissions and is
 loaded by future SSH sessions. Then build and flash the card:
 
