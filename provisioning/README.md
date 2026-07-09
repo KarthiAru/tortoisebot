@@ -56,13 +56,15 @@ The Ubuntu builder mounts the image partitions and writes directly into the root
 - `/home/<user>/.ssh/authorized_keys` with correct Linux ownership and permissions
 - `/etc/sudoers.d/90-tortoisebot`
 - `/etc/ssh/sshd_config` and `/etc/ssh/sshd_config.d/10-tortoisebot-auth.conf`
-- `/etc/netplan/99-tortoisebot-wifi.yaml`
+- `/etc/netplan/01-tortoisebot-wifi.yaml`
 - `/usr/local/sbin/tortoisebot-install.sh`
 - `/etc/motd`
 
 It also writes minimal `user-data`, `meta-data`, and `network-config` to the boot partition for compatibility with Ubuntu Raspberry Pi images, but login does not depend on cloud-init creating the user.
 
-Wi-Fi can still be baked into the image as a development convenience. If `WIFI_SSID` and `WIFI_PASSWORD` are blank, the image installs the YARI onboarding service. On boot, if no network connection is available, the device attempts to start setup AP `YARI-<hostname>` and serves a local setup page at `http://192.168.4.1`. The first implementation prefers NetworkManager hotspot mode for AP fallback and falls back to `wpa_supplicant` plus `systemd-networkd` DHCP on Ubuntu Server style images.
+Wi-Fi can still be baked into the image as a development convenience. The first boot uses the Ubuntu Server `systemd-networkd` path so the Pi can get online before extra packages are installed. The manual TortoiseBot installer then installs NetworkManager, enables it, and rewrites the persistent netplan file to use `renderer: NetworkManager` for future boots.
+
+If `WIFI_SSID` and `WIFI_PASSWORD` are blank, the image installs the YARI onboarding service. On boot, if no network connection is available, the device attempts to start setup AP `YARI-<hostname>` and serves a local setup page at `http://192.168.4.1`. The onboarding service prefers NetworkManager hotspot mode when NetworkManager is available and falls back to `wpa_supplicant` plus `systemd-networkd` DHCP on minimal Ubuntu Server images.
 
 ## First Boot and Manual Install
 
@@ -77,7 +79,7 @@ If no Wi-Fi credentials were baked into the image, or if the configured network 
 
 Connect your laptop/phone to that access point, open the URL, enter Wi-Fi credentials, and save. The device writes persistent network configuration and reboots.
 
-The first implementation prefers NetworkManager (`nmcli`) for AP mode and falls back to `wpa_supplicant` AP mode with `systemd-networkd` DHCP. If neither backend is available, the service records a clear error in `/var/lib/yari/onboarding/state.json`.
+The onboarding service prefers NetworkManager (`nmcli`) for AP mode and falls back to `wpa_supplicant` AP mode with `systemd-networkd` DHCP. If neither backend is available, the service records a clear error in `/var/lib/yari/onboarding/state.json`.
 
 Insert the card into the Raspberry Pi and boot it. The base system should join Wi-Fi and allow SSH with the configured user.
 

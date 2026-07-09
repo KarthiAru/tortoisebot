@@ -27,6 +27,7 @@ apt-get install -y \
   build-essential \
   cmake \
   git \
+  network-manager \
   python3-ament-package \
   python3-colcon-common-extensions \
   python3-opencv \
@@ -57,6 +58,53 @@ apt-get install -y \
   ros-humble-camera-ros \
   ros-humble-v4l2-camera \
   ros-humble-image-transport-plugins
+
+configure_network_manager() {
+  install -d /etc/netplan
+
+  # Keep one persistent Wi-Fi owner. Older provisioning attempts may leave
+  # duplicate cloud-init/TortoiseBot netplan files behind.
+  rm -f /etc/netplan/50-cloud-init.yaml /etc/netplan/99-tortoisebot-wifi.yaml
+
+  if [[ -f /etc/netplan/01-tortoisebot-wifi.yaml ]]; then
+    cp -n /etc/netplan/01-tortoisebot-wifi.yaml /etc/netplan/01-tortoisebot-wifi.yaml.pre-networkmanager || true
+    python3 - <<'PY_NETPLAN'
+from pathlib import Path
+
+path = Path("/etc/netplan/01-tortoisebot-wifi.yaml")
+text = path.read_text()
+lines = text.splitlines()
+out = []
+inserted = False
+
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("renderer:"):
+        continue
+    out.append(line)
+    if stripped == "version: 2" and not inserted:
+        out.append("  renderer: NetworkManager")
+        inserted = True
+
+if not inserted:
+    out = ["network:", "  version: 2", "  renderer: NetworkManager"]
+
+path.write_text("\n".join(out).rstrip() + "\n")
+PY_NETPLAN
+  else
+    cat > /etc/netplan/01-tortoisebot-wifi.yaml <<'NETPLAN'
+network:
+  version: 2
+  renderer: NetworkManager
+NETPLAN
+  fi
+
+  chmod 0600 /etc/netplan/01-tortoisebot-wifi.yaml
+  systemctl enable NetworkManager || true
+  netplan generate
+}
+
+configure_network_manager
 
 pip3 install adafruit-blinka adafruit-circuitpython-bno055
 
