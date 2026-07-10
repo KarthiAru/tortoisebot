@@ -15,6 +15,8 @@ STATE_DIR = Path(os.environ.get("YARI_SERVICE_STATE_DIR", "/var/lib/yari/service
 RUNTIME_DIR = Path(os.environ.get("YARI_SERVICE_RUNTIME_DIR", "/run/yari"))
 CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
+PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
+PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
 FLIGHT_LOG_DIR = Path(os.environ.get("YARI_FLIGHT_LOG_DIR", "/var/lib/yari/flight-logs"))
@@ -628,10 +630,57 @@ def start_video_stream(settings, devices):
     pid_file.write_text(str(proc.pid) + "\n")
     return {"running": True, "state": "starting", "pid": proc.pid, "device": device, "rtsp_url": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video", "log_file": str(log_file), "args": args}
 
+def ros_topic_available(topic, expected_type=""):
+    if not topic:
+        return {"available": False, "topic": topic, "message": "topic is not configured"}
+    result = command(["bash", "-lc", "source /opt/ros/humble/setup.bash 2>/dev/null || true; ros2 topic list -t"], timeout=8)
+    if not result.get("ok"):
+        return {"available": False, "topic": topic, "error": result.get("stderr") or "ros2 topic list failed"}
+    for line in result.get("stdout", "").splitlines():
+        parts = line.strip().rsplit(" [", 1)
+        if len(parts) == 2 and parts[0] == topic:
+            topic_type = parts[1].rstrip("]")
+            return {"available": not expected_type or topic_type == expected_type, "topic": topic, "type": topic_type, "expected_type": expected_type}
+    return {"available": False, "topic": topic, "expected_type": expected_type, "message": "topic not currently published"}
+
+
+def video_stream_targets(settings):
+    portal_config = read_json(PORTAL_CONFIG_FILE, {})
+    secrets = read_json(PORTAL_SECRETS_FILE, {})
+    foxglove_topic = settings.get("foxglove_topic") or "/camera/image_raw/compressed"
+    atlas_topic = settings.get("atlas_camera_topic") or foxglove_topic
+    foxglove_status = ros_topic_available(foxglove_topic, "sensor_msgs/msg/CompressedImage")
+    atlas_status = ros_topic_available(atlas_topic, "sensor_msgs/msg/CompressedImage")
+    return {
+        "rtsp": {
+            "enabled": bool(settings.get("stream_enabled")),
+            "url": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video",
+            "encoding": settings.get("encoding", "mjpeg"),
+            "fps": settings.get("fps", 15),
+            "bandwidth_kbps": settings.get("bandwidth_kbps"),
+        },
+        "foxglove": {
+            "topic": foxglove_topic,
+            "expected_type": "sensor_msgs/msg/CompressedImage",
+            "ready": bool(foxglove_status.get("available")),
+            "status": foxglove_status,
+        },
+        "atlas_webrtc": {
+            "enabled": bool(settings.get("atlas_webrtc_enabled")),
+            "camera_topic": atlas_topic,
+            "max_video_fps": settings.get("atlas_max_video_fps", settings.get("fps", 15)),
+            "ready": bool(settings.get("atlas_webrtc_enabled") and portal_config.get("atlas_url") and secrets.get("atlas_token") and atlas_status.get("available")),
+            "atlas_url_configured": bool(portal_config.get("atlas_url")),
+            "atlas_token_configured": bool(secrets.get("atlas_token")),
+            "topic_status": atlas_status,
+        },
+    }
+
+
 def video_status():
     v4l2 = command(["bash", "-lc", "command -v v4l2-ctl >/dev/null && v4l2-ctl --list-devices"], timeout=8)
     devices = glob_paths(["/dev/video*", "/dev/media*"])
-    settings = read_json(CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "stream_enabled": False, "rtsp_url": "rtsp://127.0.0.1:8554/yari-video"})
+    settings = read_json(CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "stream_enabled": False, "rtsp_url": "rtsp://127.0.0.1:8554/yari-video", "foxglove_topic": "/camera/image_raw/compressed", "atlas_webrtc_enabled": False, "atlas_camera_topic": "/camera/image_raw/compressed", "atlas_max_video_fps": 15})
     stream = start_video_stream(settings, [device for device in devices if "/dev/video" in device])
     return {
         **service_status("video"),
@@ -640,6 +689,7 @@ def video_status():
         "profiles": ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"],
         "settings": settings,
         "stream": stream,
+        "stream_targets": video_stream_targets(settings),
     }
 
 

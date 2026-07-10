@@ -183,7 +183,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 
 ## Phase 2 Runtime Dependencies
 
-`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly. `yari-video.service` uses optional `ffmpeg` to push a configured `/dev/video*` stream to an RTSP URL when `stream_enabled` is true and the portal can capture an on-demand JPEG preview at `/api/video/snapshot`; without `ffmpeg` or a camera device, the portal reports the exact stream/preview state. `yari-log-manager.service` uses optional `pymavlink` MAVLink LOG messages to list remote PX4/ArduPilot logs and process queued log-download requests into `/var/lib/yari/flight-logs`.
+`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly. `yari-video.service` uses optional `ffmpeg` to push a configured `/dev/video*` stream to an RTSP URL when `stream_enabled` is true and the portal can capture an on-demand JPEG preview at `/api/video/snapshot`; without `ffmpeg` or a camera device, the portal reports the exact stream/preview state. The Video page also stores Foxglove and Atlas WebRTC camera topics, verifies that compressed ROS image topics are currently published, and reports Atlas WebRTC readiness from Atlas URL/token plus topic availability. `yari-log-manager.service` uses optional `pymavlink` MAVLink LOG messages to list remote PX4/ArduPilot logs and process queued log-download requests into `/var/lib/yari/flight-logs`.
 
 `yari-agent.service` publishes lightweight device telemetry, Atlas/Foxglove remote-access readiness, and processes the local upload queue at `/var/lib/yari/upload-queue.json`. All YARI service units installed by this package run concrete `yari-service-manager` roles and are enabled by the installer so fresh images publish status on boot; the old placeholder service script has been removed. The Data page can enqueue discovered MCAP and flight-log files, retry failed items, and clear completed items. Uploads require an Atlas device token saved through the Setup page. By default, the agent posts multipart uploads to `<atlas_url>/logs/upload`; set `atlas_upload_url` in `/etc/yari/device-portal.json` or the Setup page when Atlas exposes a different ingestion endpoint. The multipart payload contains a `metadata` JSON field and a binary `file` field, authenticated with `Authorization: Bearer <atlas_token>`.
 
@@ -216,8 +216,8 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
 | `POST /api/ros/recording/start` | Starts `ros2 bag record --storage mcap`; leave topics blank to record all topics. |
 | `POST /api/ros/recording/stop` | Sends SIGINT to the active rosbag process and updates recording state. |
-| `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, persisted stream settings, and ffmpeg RTSP process state. |
-| `POST /api/video/settings` | Saves stream enablement, device, RTSP URL, frame size, FPS, encoding, and bandwidth settings. |
+| `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, RTSP/Foxglove/Atlas WebRTC target readiness, persisted stream settings, and ffmpeg RTSP process state. |
+| `POST /api/video/settings` | Saves stream enablement, device, RTSP URL, frame size, FPS, encoding, bandwidth, Foxglove compressed topic, and Atlas WebRTC camera topic/fps settings. |
 | `GET /api/data/status` | MCAP files, PX4/ArduPilot local/remote flight logs, download queue, upload queue, and storage cleanup status. |
 | `POST /api/data/flight-logs/download` | Queues a PX4/ArduPilot MAVLink LOG download by `log_id`. |
 | `POST /api/data/flight-logs/retry` | Requeues failed/missing flight-log download requests. |
@@ -261,5 +261,5 @@ The current autopilot, MAVLink, ROS, video, and data endpoints are scaffolding. 
 - `yari-autopilot-manager`: MAVLink heartbeat, firmware, vehicle type, mode, arm state, GPS, battery, EKF, failsafe.
 - `yari-mavlink-router`: serial/UDP/TCP routing profiles for PX4, ArduPilot, Atlas, Foxglove, and ground stations.
 - `yari-ros`: configurable launch profiles, topic discovery, lifecycle state, rosbag/MCAP recording controls.
-- `yari-video`: camera selection, encoding profile, ROS image topic publishing, Foxglove/Atlas streaming.
+- `yari-video`: camera selection, encoding profile, RTSP process supervision, Foxglove compressed-topic readiness, and Atlas WebRTC topic readiness.
 - `yari-log-manager`: MCAP, `.ulg`, `.bin`, service log indexing, upload, and download.

@@ -25,6 +25,9 @@ class YariServiceManagerTests(unittest.TestCase):
         self.module.STATE_DIR = root / "state"
         self.module.RUNTIME_DIR = root / "run"
         self.module.CONFIG_DIR = root / "config"
+        self.module.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        self.module.PORTAL_CONFIG_FILE = self.module.CONFIG_DIR / "device-portal.json"
+        self.module.PORTAL_SECRETS_FILE = self.module.CONFIG_DIR / "device-portal-secrets.json"
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
@@ -149,6 +152,16 @@ class YariServiceManagerTests(unittest.TestCase):
         self.module.command_exists = lambda name: False
         missing = self.module.start_video_stream({"stream_enabled": True}, ["/dev/video0"])
         self.assertEqual(missing["state"], "ffmpeg-missing")
+
+    def test_video_status_reports_stream_targets(self):
+        self.module.command = lambda args, timeout=8: {"ok": True, "stdout": "/camera/image_raw/compressed [sensor_msgs/msg/CompressedImage]", "stderr": "", "returncode": 0} if "ros2 topic list" in " ".join(args) else {"ok": False, "stdout": "", "stderr": "missing", "returncode": 1}
+        (self.module.CONFIG_DIR / "video.json").write_text('{"foxglove_topic":"/camera/image_raw/compressed","atlas_webrtc_enabled":true,"atlas_camera_topic":"/camera/image_raw/compressed","stream_enabled":false}')
+        self.module.PORTAL_CONFIG_FILE.write_text('{"atlas_url":"http://atlas/api/v1"}')
+        self.module.PORTAL_SECRETS_FILE.write_text('{"atlas_token":"token"}')
+        status = self.module.video_status()
+        self.assertEqual(status["stream"]["state"], "disabled")
+        self.assertTrue(status["stream_targets"]["foxglove"]["ready"])
+        self.assertTrue(status["stream_targets"]["atlas_webrtc"]["ready"])
 
 
 

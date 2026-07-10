@@ -1096,6 +1096,50 @@ def sh_quote(value):
     return "'" + str(value).replace("'", "'\''") + "'"
 
 
+def normalize_ros_topic(value, default):
+    topic = str(value or default).strip()
+    if not topic.startswith("/"):
+        raise ValueError(f"ROS topic must start with /: {topic}")
+    if any(char.isspace() for char in topic):
+        raise ValueError(f"ROS topic cannot contain whitespace: {topic}")
+    return topic
+
+
+def ros_topic_available(topic, expected_type=""):
+    if not topic:
+        return {"available": False, "topic": topic, "message": "topic is not configured"}
+    result = ros_command(["ros2", "topic", "list", "-t"], timeout=6)
+    if not result.get("ok"):
+        return {"available": False, "topic": topic, "error": result.get("stderr") or "ros2 topic list failed"}
+    for line in result.get("stdout", "").splitlines():
+        match = re.match(r"^(\S+)\s+\[(.+)\]$", line.strip())
+        if match and match.group(1) == topic:
+            topic_type = match.group(2)
+            return {
+                "available": not expected_type or topic_type == expected_type,
+                "topic": topic,
+                "type": topic_type,
+                "expected_type": expected_type,
+            }
+    return {"available": False, "topic": topic, "expected_type": expected_type, "message": "topic not currently published"}
+
+
+def read_video_settings():
+    return read_json_file(VIDEO_CONFIG_FILE, {
+        "fps": 15,
+        "encoding": "mjpeg",
+        "bandwidth_kbps": None,
+        "device": "",
+        "size": "640x480",
+        "stream_enabled": False,
+        "rtsp_url": "rtsp://127.0.0.1:8554/yari-video",
+        "foxglove_topic": "/camera/image_raw/compressed",
+        "atlas_webrtc_enabled": False,
+        "atlas_camera_topic": "/camera/image_raw/compressed",
+        "atlas_max_video_fps": 15,
+    })
+
+
 def save_video_settings(payload):
     fps = int(payload.get("fps", 15))
     if fps < 1 or fps > 60:
@@ -1110,6 +1154,9 @@ def save_video_settings(payload):
     rtsp_url = str(payload.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video")
     if not rtsp_url.startswith("rtsp://"):
         raise ValueError("rtsp_url must start with rtsp://")
+    atlas_max_video_fps = int(payload.get("atlas_max_video_fps") or fps)
+    if atlas_max_video_fps < 1 or atlas_max_video_fps > 60:
+        raise ValueError("atlas_max_video_fps must be between 1 and 60")
     settings = {
         "fps": fps,
         "encoding": encoding,
@@ -1118,6 +1165,10 @@ def save_video_settings(payload):
         "device": str(payload.get("device") or ""),
         "size": str(payload.get("size") or "640x480"),
         "rtsp_url": rtsp_url,
+        "foxglove_topic": normalize_ros_topic(payload.get("foxglove_topic"), "/camera/image_raw/compressed"),
+        "atlas_webrtc_enabled": bool(payload.get("atlas_webrtc_enabled") in {True, "true", "on", "1", 1}),
+        "atlas_camera_topic": normalize_ros_topic(payload.get("atlas_camera_topic"), "/camera/image_raw/compressed"),
+        "atlas_max_video_fps": atlas_max_video_fps,
         "updated": int(time.time()),
     }
     VIDEO_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1283,7 +1334,7 @@ def video_preview_status(settings, devices):
 
 
 def capture_video_snapshot():
-    settings = read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "device": "", "size": "640x480"})
+    settings = read_video_settings()
     devices = glob_paths(["/dev/video*"])
     device = settings.get("device") or (devices[0] if devices else "")
     if not device:
@@ -1300,21 +1351,54 @@ def capture_video_snapshot():
     return result.stdout
 
 
+def video_stream_targets(settings, manager_payload=None):
+    manager_payload = manager_payload or {}
+    portal_config = read_json_file(PORTAL_CONFIG_FILE, {})
+    secrets = read_json_file(PORTAL_SECRETS_FILE, {})
+    foxglove_topic = settings.get("foxglove_topic") or "/camera/image_raw/compressed"
+    atlas_topic = settings.get("atlas_camera_topic") or foxglove_topic
+    foxglove_status = manager_payload.get("foxglove", ros_topic_available(foxglove_topic, "sensor_msgs/msg/CompressedImage"))
+    atlas_topic_status = manager_payload.get("atlas_topic", ros_topic_available(atlas_topic, "sensor_msgs/msg/CompressedImage"))
+    atlas_ready = bool(settings.get("atlas_webrtc_enabled") and portal_config.get("atlas_url") and secrets.get("atlas_token") and atlas_topic_status.get("available"))
+    return {
+        "rtsp": {
+            "enabled": bool(settings.get("stream_enabled")),
+            "url": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video",
+            "encoding": settings.get("encoding", "mjpeg"),
+            "fps": settings.get("fps", 15),
+            "bandwidth_kbps": settings.get("bandwidth_kbps"),
+        },
+        "foxglove": {
+            "topic": foxglove_topic,
+            "expected_type": "sensor_msgs/msg/CompressedImage",
+            "ready": bool(foxglove_status.get("available")),
+            "status": foxglove_status,
+            "message": "Use this compressed ROS image topic in Foxglove for low-bandwidth live video.",
+        },
+        "atlas_webrtc": {
+            "enabled": bool(settings.get("atlas_webrtc_enabled")),
+            "camera_topic": atlas_topic,
+            "max_video_fps": settings.get("atlas_max_video_fps", settings.get("fps", 15)),
+            "ready": atlas_ready,
+            "atlas_url_configured": bool(portal_config.get("atlas_url")),
+            "atlas_token_configured": bool(secrets.get("atlas_token")),
+            "topic_status": atlas_topic_status,
+            "message": "Atlas WebRTC is ready when enabled, Atlas credentials are saved, and the compressed camera topic is published.",
+        },
+    }
+
+
 def video_status():
     manager_payload = service_manager_status("video")
     devices = manager_payload.get("devices", glob_paths(["/dev/video*", "/dev/media*"]))
-    settings = manager_payload.get("settings", read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "device": "", "size": "640x480"}))
+    settings = manager_payload.get("settings", read_video_settings())
     return {
         "devices": devices,
         "service": service_status("yari-video"),
         "profiles": manager_payload.get("profiles", ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"]),
         "settings": settings,
         "preview": video_preview_status(settings, devices),
-        "stream_targets": {
-            "rtsp": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video",
-            "foxglove_topic": settings.get("foxglove_topic") or "/camera/image_raw/compressed",
-            "atlas_webrtc": settings.get("atlas_webrtc") or {"configured": False, "message": "Atlas WebRTC publishing is handled by the Atlas bridge when configured."},
-        },
+        "stream_targets": manager_payload.get("stream_targets", video_stream_targets(settings, manager_payload)),
         "manager_state": manager_payload,
         "message": "Camera pipelines can publish ROS image topics, Foxglove streams, RTSP, or Atlas WebRTC feeds.",
     }

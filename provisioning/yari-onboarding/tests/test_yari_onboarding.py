@@ -208,15 +208,28 @@ class YariOnboardingTests(unittest.TestCase):
 
 
     def test_save_video_settings_validates_and_persists(self):
-        settings = self.module.save_video_settings({"fps": "20", "encoding": "mono8", "bandwidth_kbps": "512", "stream_enabled": "on", "rtsp_url": "rtsp://127.0.0.1:8554/test"})
+        settings = self.module.save_video_settings({"fps": "20", "encoding": "mono8", "bandwidth_kbps": "512", "stream_enabled": "on", "rtsp_url": "rtsp://127.0.0.1:8554/test", "foxglove_topic": "/camera/image_raw/compressed", "atlas_webrtc_enabled": "on", "atlas_camera_topic": "/camera/image_raw/compressed", "atlas_max_video_fps": "12"})
         self.assertEqual(settings["fps"], 20)
         self.assertEqual(settings["encoding"], "mono8")
         self.assertTrue(settings["stream_enabled"])
+        self.assertTrue(settings["atlas_webrtc_enabled"])
+        self.assertEqual(settings["atlas_max_video_fps"], 12)
         self.assertTrue(self.module.VIDEO_CONFIG_FILE.exists())
         with self.assertRaises(ValueError):
             self.module.save_video_settings({"fps": "0", "encoding": "mjpeg"})
         with self.assertRaises(ValueError):
             self.module.save_video_settings({"fps": "20", "encoding": "mjpeg", "rtsp_url": "http://bad"})
+        with self.assertRaises(ValueError):
+            self.module.save_video_settings({"fps": "20", "encoding": "mjpeg", "foxglove_topic": "camera/no-slash"})
+
+    def test_video_stream_targets_reports_foxglove_and_atlas_readiness(self):
+        self.module.PORTAL_CONFIG_FILE.write_text('{"atlas_url":"http://atlas/api/v1"}')
+        self.module.PORTAL_SECRETS_FILE.write_text('{"atlas_token":"token"}')
+        self.module.ros_command = lambda args, timeout=8: {"ok": True, "stdout": "/camera/image_raw/compressed [sensor_msgs/msg/CompressedImage]", "stderr": ""}
+        settings = {"stream_enabled": True, "rtsp_url": "rtsp://127.0.0.1:8554/yari-video", "encoding": "mjpeg", "fps": 15, "foxglove_topic": "/camera/image_raw/compressed", "atlas_webrtc_enabled": True, "atlas_camera_topic": "/camera/image_raw/compressed", "atlas_max_video_fps": 10}
+        targets = self.module.video_stream_targets(settings)
+        self.assertTrue(targets["foxglove"]["ready"])
+        self.assertTrue(targets["atlas_webrtc"]["ready"])
 
     def test_video_preview_status_exposes_snapshot_endpoint(self):
         self.module.has_command = lambda name: name == "ffmpeg"
