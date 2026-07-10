@@ -3,67 +3,220 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YARI Device Setup</title>
+  <title>YARI Device Portal</title>
   <style>
-    :root { color-scheme: light dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; min-height: 100vh; background: #0b0f14; color: #eef5ff; display: grid; place-items: center; }
-    main { width: min(680px, calc(100vw - 32px)); padding: 32px; box-sizing: border-box; }
-    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 42px); letter-spacing: 0; }
-    p { color: #aab7c4; line-height: 1.55; }
-    form { display: grid; gap: 16px; margin-top: 24px; }
-    label { display: grid; gap: 7px; color: #d7e2ee; font-weight: 600; }
-    input { border: 1px solid #334252; border-radius: 8px; background: #121922; color: #eef5ff; padding: 12px 13px; font-size: 16px; }
-    button { border: 0; border-radius: 8px; background: #38bdf8; color: #041016; font-weight: 800; padding: 13px 16px; font-size: 16px; cursor: pointer; }
+    :root { color-scheme: dark; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b0f14; color: #edf4fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0b0f14; }
+    header { position: sticky; top: 0; z-index: 2; background: rgba(11, 15, 20, 0.94); border-bottom: 1px solid #223040; backdrop-filter: blur(12px); }
+    .bar { max-width: 1180px; margin: 0 auto; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    main { max-width: 1180px; margin: 0 auto; padding: 22px 20px 38px; display: grid; gap: 18px; }
+    nav { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+    nav button { flex: 0 0 auto; border: 1px solid #2e4052; background: #111923; color: #dce8f3; border-radius: 8px; padding: 10px 13px; font-weight: 700; cursor: pointer; }
+    nav button.active { background: #38bdf8; border-color: #38bdf8; color: #041016; }
+    section { display: none; gap: 16px; }
+    section.active { display: grid; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .card { border: 1px solid #273747; border-radius: 8px; background: #111820; padding: 18px; min-width: 0; }
+    h2 { margin: 0 0 12px; font-size: 18px; letter-spacing: 0; }
+    h3 { margin: 0 0 10px; font-size: 15px; color: #d7e6f3; letter-spacing: 0; }
+    p { color: #aab8c6; line-height: 1.55; margin: 0 0 14px; }
+    form { display: grid; gap: 13px; }
+    label { display: grid; gap: 7px; color: #d7e2ee; font-weight: 700; }
+    input, select, textarea { border: 1px solid #334252; border-radius: 8px; background: #0d141c; color: #eef5ff; padding: 11px 12px; font-size: 15px; min-width: 0; }
+    textarea { min-height: 150px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    button { border: 0; border-radius: 8px; background: #38bdf8; color: #041016; font-weight: 800; padding: 11px 14px; font-size: 15px; cursor: pointer; }
     button.secondary { background: #233142; color: #eef5ff; }
-    .row { display: flex; flex-wrap: wrap; gap: 12px; }
-    .row button { flex: 1 1 180px; }
-    .status { margin-top: 18px; white-space: pre-wrap; color: #c6d5e3; background: #111820; border: 1px solid #2a3948; border-radius: 8px; padding: 14px; min-height: 20px; }
+    button.danger { background: #f87171; color: #1b0606; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .row button { flex: 0 1 auto; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; border: 1px solid #34465a; border-radius: 999px; padding: 6px 10px; color: #d9e8f5; background: #111923; font-size: 13px; font-weight: 700; }
+    .ok { color: #6ee7b7; }
+    .warn { color: #fde68a; }
+    .bad { color: #fca5a5; }
+    pre { overflow: auto; white-space: pre-wrap; margin: 0; color: #c6d5e3; background: #0c1219; border: 1px solid #263647; border-radius: 8px; padding: 13px; min-height: 42px; font-size: 13px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; border-bottom: 1px solid #273747; padding: 9px 6px; vertical-align: top; }
+    th { color: #aab8c6; font-weight: 800; }
+    @media (max-width: 760px) { .bar { align-items: flex-start; flex-direction: column; } .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <main>
-    <h1>YARI Device Setup</h1>
-    <p>Connect this robot to your Wi-Fi network. After saving, the device will reboot and join the configured network.</p>
-    <form id="setup-form">
-      <label>Wi-Fi SSID<input name="ssid" autocomplete="off" required></label>
-      <label>Wi-Fi password<input name="password" type="password" autocomplete="current-password" required></label>
-      <label>Hostname<input name="hostname" autocomplete="off" value="tortoisebot"></label>
-      <div class="row">
-        <button type="submit">Save and reboot</button>
-        <button class="secondary" type="button" id="status-button">Refresh status</button>
+  <header>
+    <div class="bar">
+      <div>
+        <h1>YARI Device Portal</h1>
+        <div class="row" id="summary"></div>
       </div>
-    </form>
-    <div class="status" id="status">Loading status...</div>
+      <button class="secondary" id="refresh-all" type="button">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <nav>
+      <button class="active" data-tab="setup">Setup</button>
+      <button data-tab="status">Status</button>
+      <button data-tab="network">Network</button>
+      <button data-tab="services">Services</button>
+      <button data-tab="platform">Autopilot + ROS</button>
+      <button data-tab="maintenance">Maintenance</button>
+    </nav>
+
+    <section id="setup" class="active">
+      <div class="grid">
+        <div class="card">
+          <h2>Wi-Fi Setup</h2>
+          <p>Save client Wi-Fi settings for this device. On single-radio devices, the AP will drop after reboot and the device will join the configured network.</p>
+          <form id="setup-form">
+            <label>Wi-Fi SSID<input name="ssid" autocomplete="off" required></label>
+            <label>Wi-Fi password<input name="password" type="password" autocomplete="current-password" required></label>
+            <label>Hostname<input name="hostname" autocomplete="off" value="tortoisebot"></label>
+            <button type="submit">Save and reboot</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Current State</h2>
+          <pre id="setup-state">Loading...</pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="status">
+      <div class="grid">
+        <div class="card"><h2>Device</h2><pre id="device-status">Loading...</pre></div>
+        <div class="card"><h2>Storage</h2><pre id="storage-status">Loading...</pre></div>
+      </div>
+    </section>
+
+    <section id="network">
+      <div class="grid">
+        <div class="card">
+          <h2>Wi-Fi Networks</h2>
+          <div class="row"><button id="scan-wifi" type="button">Scan</button><button class="secondary" id="enable-ap" type="button">Enable AP</button></div>
+          <div id="wifi-list"></div>
+        </div>
+        <div class="card"><h2>Network Status</h2><pre id="network-status">Loading...</pre></div>
+      </div>
+    </section>
+
+    <section id="services">
+      <div class="card">
+        <h2>Services</h2>
+        <div id="service-list"></div>
+      </div>
+      <div class="card">
+        <h2>Service Logs</h2>
+        <pre id="service-logs">Select a service log.</pre>
+      </div>
+    </section>
+
+    <section id="platform">
+      <div class="grid">
+        <div class="card"><h2>Autopilot</h2><pre id="autopilot-status">Loading...</pre></div>
+        <div class="card"><h2>ROS 2</h2><pre id="ros-status">Loading...</pre></div>
+        <div class="card"><h2>Video</h2><pre id="video-status">Loading...</pre></div>
+        <div class="card"><h2>Data</h2><pre id="data-status">Loading...</pre></div>
+      </div>
+    </section>
+
+    <section id="maintenance">
+      <div class="grid">
+        <div class="card">
+          <h2>MAVLink Endpoints</h2>
+          <textarea id="mavlink-config"></textarea>
+          <div class="row"><button id="save-mavlink" type="button">Save endpoints</button></div>
+        </div>
+        <div class="card">
+          <h2>Device Actions</h2>
+          <div class="row">
+            <button class="secondary" id="reboot" type="button">Reboot</button>
+            <button class="danger" id="factory-reset" type="button">Factory reset network</button>
+          </div>
+          <pre id="maintenance-output">Ready.</pre>
+        </div>
+      </div>
+    </section>
   </main>
+
   <script>
-    const statusEl = document.querySelector('#status');
-    async function refreshStatus() {
-      try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
-        statusEl.textContent = JSON.stringify(data, null, 2);
-      } catch (error) {
-        statusEl.textContent = `Unable to read status: ${error}`;
-      }
+    const $ = (selector) => document.querySelector(selector);
+    const pretty = (value) => JSON.stringify(value, null, 2);
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      return data;
     }
-    document.querySelector('#status-button').addEventListener('click', refreshStatus);
-    document.querySelector('#setup-form').addEventListener('submit', async (event) => {
+    async function post(path, body = {}) {
+      return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    }
+    function setPre(selector, data) { $(selector).textContent = typeof data === 'string' ? data : pretty(data); }
+    function statusClass(value) {
+      if (['active', 'enabled', true].includes(value)) return 'ok';
+      if (['inactive', 'disabled', 'unknown'].includes(value)) return 'warn';
+      return 'bad';
+    }
+    async function refreshDevice() {
+      const data = await api('/api/device/status');
+      $('#summary').innerHTML = `
+        <span class="pill">${data.hostname || 'device'}</span>
+        <span class="pill ${data.ip_addresses?.length ? 'ok' : 'warn'}">${(data.ip_addresses || []).join(' ') || 'no IP'}</span>
+        <span class="pill">${data.onboarding?.mode || 'unknown'}</span>`;
+      setPre('#setup-state', data.onboarding || data);
+      setPre('#device-status', { hostname: data.hostname, device_id: data.device_id, kernel: data.kernel, architecture: data.architecture, cpu_count: data.cpu_count, memory: data.memory, temperature_c: data.temperature_c, ip_addresses: data.ip_addresses });
+      setPre('#storage-status', data.storage);
+    }
+    async function refreshNetwork() { setPre('#network-status', await api('/api/network/status')); }
+    async function refreshWifiScan() {
+      const data = await api('/api/network/wifi/scan');
+      const rows = data.networks.map((n) => `<tr><td>${n.ssid}</td><td>${n.signal}</td><td>${n.security || 'open'}</td><td>${n.channel}</td></tr>`).join('');
+      $('#wifi-list').innerHTML = `<table><thead><tr><th>SSID</th><th>Signal</th><th>Security</th><th>Ch</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No networks found</td></tr>'}</tbody></table>`;
+    }
+    async function refreshServices() {
+      const data = await api('/api/services');
+      $('#service-list').innerHTML = `<table><thead><tr><th>Service</th><th>Active</th><th>Enabled</th><th></th></tr></thead><tbody>${data.services.map((svc) => `
+        <tr>
+          <td>${svc.name}<br><small>${svc.unit}</small></td>
+          <td class="${statusClass(svc.active)}">${svc.active}</td>
+          <td class="${statusClass(svc.enabled)}">${svc.enabled}</td>
+          <td><button class="secondary" data-log="${svc.name}" type="button">Logs</button></td>
+        </tr>`).join('')}</tbody></table>`;
+      document.querySelectorAll('[data-log]').forEach((button) => button.addEventListener('click', async () => {
+        setPre('#service-logs', await api(`/api/services/${button.dataset.log}/logs?lines=120`));
+      }));
+    }
+    async function refreshPlatform() {
+      setPre('#autopilot-status', await api('/api/autopilot/status'));
+      setPre('#ros-status', await api('/api/ros/status'));
+      setPre('#video-status', await api('/api/video/status'));
+      setPre('#data-status', await api('/api/data/status'));
+      setPre('#mavlink-config', await api('/api/mavlink/endpoints'));
+    }
+    async function refreshAll() {
+      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshPlatform()]);
+    }
+    document.querySelectorAll('nav button').forEach((button) => button.addEventListener('click', () => {
+      document.querySelectorAll('nav button').forEach((item) => item.classList.remove('active'));
+      document.querySelectorAll('section').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
+      $(`#${button.dataset.tab}`).classList.add('active');
+    }));
+    $('#refresh-all').addEventListener('click', refreshAll);
+    $('#scan-wifi').addEventListener('click', refreshWifiScan);
+    $('#enable-ap').addEventListener('click', async () => { setPre('#network-status', await post('/api/network/ap/enable')); });
+    $('#setup-form').addEventListener('submit', async (event) => {
       event.preventDefault();
+      setPre('#setup-state', 'Saving network settings...');
       const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-      statusEl.textContent = 'Saving network settings...';
-      try {
-        const response = await fetch('/api/configure', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const data = await response.json();
-        statusEl.textContent = JSON.stringify(data, null, 2);
-      } catch (error) {
-        statusEl.textContent = `Save failed: ${error}`;
-      }
+      setPre('#setup-state', await post('/api/network/wifi/save', body));
     });
-    refreshStatus();
+    $('#reboot').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/reboot')); });
+    $('#factory-reset').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/network/factory-reset', { reboot: false })); });
+    $('#save-mavlink').addEventListener('click', async () => {
+      try { setPre('#maintenance-output', await post('/api/mavlink/endpoints', JSON.parse($('#mavlink-config').value))); }
+      catch (error) { setPre('#maintenance-output', `Save failed: ${error}`); }
+    });
+    refreshAll();
   </script>
 </body>
 </html>

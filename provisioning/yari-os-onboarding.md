@@ -161,3 +161,97 @@ Then reboot and confirm `wlan0` has an address:
 ip addr show wlan0
 ping -c 3 8.8.8.8
 ```
+
+## Core Portal v0.2
+
+The onboarding service is now evolving into the always-on YARI device portal. It still handles first-boot Wi-Fi setup, but it also stays online after the device joins normal Wi-Fi so operators can inspect and manage the device from `http://<hostname>.local` or `http://<device-ip>`.
+
+Current API surface:
+
+| Area | Endpoint | Purpose |
+|---|---|---|
+| Device | `GET /api/device/status` | Hostname, identity, OS, kernel, CPU, memory, temperature, storage, IPs, onboarding state. |
+| Network | `GET /api/network/status` | Interfaces, NetworkManager devices, active connections, AP/client state. |
+| Network | `GET /api/network/wifi/scan` | Nearby SSIDs with signal/security/channel when NetworkManager is available. |
+| Network | `POST /api/network/wifi/save` | Save Wi-Fi credentials and hostname using the same path as first boot setup. |
+| Network | `POST /api/network/ap/enable` | Force setup AP mode for maintenance. |
+| Network | `POST /api/network/factory-reset` | Remove saved YARI network config and clear onboarding completion state. |
+| Services | `GET /api/services` | Status for allowlisted YARI services. |
+| Services | `POST /api/services/<name>/start` | Start an allowlisted service. Also supports `stop`, `restart`, `enable`, and `disable`. |
+| Services | `GET /api/services/<name>/logs` | Tail journal logs for an allowlisted service. |
+| Autopilot | `GET /api/autopilot/status` | Companion-computer scaffold for serial devices and MAVLink manager state. |
+| MAVLink | `GET /api/mavlink/endpoints` | Read configured MAVLink endpoints. |
+| MAVLink | `POST /api/mavlink/endpoints` | Persist validated serial/UDP/TCP endpoint config to `/etc/yari/mavlink-endpoints.json`. |
+| ROS 2 | `GET /api/ros/status` | ROS 2 presence and node list when ROS is installed. |
+| ROS 2 | `GET /api/ros/topics` | ROS 2 topic/type list. |
+| Video | `GET /api/video/status` | Camera/media device discovery and video service status. |
+| Data | `GET /api/data/status` | Recent MCAP files and log-manager service status. |
+
+Service controls are intentionally allowlisted. The portal does not expose arbitrary `systemctl` access.
+
+## YARI OS Evolution Roadmap
+
+### Phase 1: Core Device Portal
+
+Current implementation provides the first practical slice: persistent portal, Wi-Fi setup, network status, service status/logs, factory reset, and a single static web UI. The next hardening work is:
+
+1. Bind setup-only actions to the AP interface or require a physical-access token.
+2. Add per-device AP passwords for production images.
+3. Add a captive portal redirect for phones and tablets.
+4. Add downloadable support bundles with onboarding logs, NetworkManager logs, system info, and ROS status.
+5. Add OTA-safe migration for `/etc/yari/*` and NetworkManager profile changes.
+
+### Phase 2: Autopilot + Companion Computer Layer
+
+The new autopilot, MAVLink, ROS, video, and data endpoints are scaffolding for the manager services that should follow. For PX4/ArduPilot companion computers, YARI OS should add:
+
+1. `yari-autopilot-manager`: detect PX4/ArduPilot heartbeat, firmware type, vehicle type, system ID, component ID, arm state, flight mode, battery, GPS, EKF health, and failsafe state.
+2. `yari-mavlink-router`: configure serial/UDP/TCP MAVLink routing for autopilot, ground station, Atlas, ROS bridge, and log capture.
+3. `yari-ros`: manage ROS 2 launch profiles, topic discovery, lifecycle state, rosbag/MCAP recording, and common diagnostics.
+4. `yari-video`: configure camera devices, encoders, ROS image topics, Foxglove bridge, and Atlas/WebRTC streams.
+5. `yari-log-manager`: index `.ulg`, `.bin`, ROS bag, MCAP, and service logs for upload/download.
+
+### Phase 3: Apps and Extensions
+
+BlueOS-style self-service should come from an app model, not hand-editing system files. A future app package should declare:
+
+```json
+{
+  "id": "example-app",
+  "name": "Example App",
+  "version": "1.0.0",
+  "services": ["example-app.service"],
+  "ports": [8080],
+  "permissions": ["ros.read", "mavlink.read"],
+  "ui": { "path": "/apps/example-app/" }
+}
+```
+
+Portal requirements for apps:
+
+1. Install/remove/start/stop apps from the UI.
+2. Show app logs and health.
+3. Support containerized apps later without requiring containers for the core portal.
+4. Keep app permissions explicit so a payload-specific app cannot silently take over networking or vehicle control.
+
+### Phase 4: Fleet Pairing and Remote Operations
+
+YARI OS should make cloud pairing self-serve:
+
+1. Atlas token entry and validation.
+2. Foxglove remote access token entry and validation.
+3. Live connection status for both agents.
+4. Remote support mode with temporary tokens.
+5. Offline-first operation where local portal remains useful without cloud access.
+
+### Phase 5: Hardware Targets
+
+Keep hardware-specific logic behind adapters:
+
+| Target | Network | Autopilot | Video | Notes |
+|---|---|---|---|---|
+| Raspberry Pi | NetworkManager | USB/UART MAVLink | CSI/USB camera | Current TortoiseBot base. |
+| Jetson Orin | NetworkManager | USB/UART/UDP MAVLink | CSI/GStreamer | Needs GPU video pipeline controls. |
+| Generic Ubuntu mini PC | NetworkManager | UDP/serial MAVLink | USB/IP camera | Good for lab and industrial boxes. |
+
+The core portal should stay ROS-independent and vehicle-independent. TortoiseBot, PX4 drones, ArduPilot rovers, and future edge devices should share the same onboarding, network, service, log, app, and token foundation.

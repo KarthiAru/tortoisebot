@@ -12,7 +12,7 @@ import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 STATE_DIR = Path(os.environ.get("YARI_ONBOARDING_STATE_DIR", "/var/lib/yari/onboarding"))
 STATE_FILE = STATE_DIR / "state.json"
@@ -32,6 +32,18 @@ AP_PASSWORD = os.environ.get("YARI_ONBOARDING_AP_PASSWORD", "")
 CONNECTIVITY_TIMEOUT = int(os.environ.get("YARI_ONBOARDING_CONNECTIVITY_TIMEOUT", "45"))
 HTTP_PORT = int(os.environ.get("YARI_ONBOARDING_HTTP_PORT", "80"))
 REBOOT_AFTER_SAVE = os.environ.get("YARI_ONBOARDING_REBOOT_AFTER_SAVE", "1") not in {"0", "false", "False"}
+MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
+MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
+SERVICE_ALLOWLIST = {
+    "yari-onboarding": "yari-onboarding.service",
+    "yari-agent": "yari-agent.service",
+    "yari-mavlink-router": "yari-mavlink-router.service",
+    "yari-autopilot-manager": "yari-autopilot-manager.service",
+    "yari-log-manager": "yari-log-manager.service",
+    "yari-video": "yari-video.service",
+    "yari-ros": "yari-ros.service",
+    "foxglove-bridge": "foxglove-bridge.service",
+}
 
 
 def run(args, check=False, capture=True):
@@ -81,6 +93,28 @@ def current_state(extra=None):
 def write_state(payload):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def read_state():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return current_state()
+
+
+def read_text_file(path):
+    try:
+        return Path(path).read_text().strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
+
+
+def command_output(args, timeout=8):
+    try:
+        result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "stdout": "", "stderr": str(exc), "returncode": 1}
+    return {"ok": result.returncode == 0, "stdout": result.stdout.strip(), "stderr": result.stderr.strip(), "returncode": result.returncode}
 
 
 def has_connectivity():
@@ -318,6 +352,275 @@ def reboot_soon():
     threading.Thread(target=delayed, daemon=True).start()
 
 
+
+def split_escaped(value, separator=":"):
+    parts = []
+    current = []
+    escaped = False
+    for char in value:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == separator:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    if escaped:
+        current.append("\\")
+    parts.append("".join(current))
+    return parts
+
+
+def parse_kv_lines(output, separator=":"):
+    rows = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        rows.append([part.strip() for part in split_escaped(line, separator)])
+    return rows
+
+
+def parse_lsblk_json():
+    result = command_output(["lsblk", "-J", "-o", "NAME,TYPE,SIZE,MOUNTPOINT,MODEL,TRAN"], timeout=6)
+    if not result["ok"]:
+        return []
+    try:
+        return json.loads(result["stdout"]).get("blockdevices", [])
+    except json.JSONDecodeError:
+        return []
+
+
+def device_status():
+    meminfo = read_text_file("/proc/meminfo")
+    memory = {}
+    for line in meminfo.splitlines():
+        key, _, value = line.partition(":")
+        if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}:
+            memory[key] = value.strip()
+    temp = read_text_file("/sys/class/thermal/thermal_zone0/temp")
+    temperature_c = None
+    if temp.isdigit():
+        temperature_c = round(int(temp) / 1000, 1)
+    return {
+        "device_id": device_id(),
+        "hostname": socket.gethostname(),
+        "os_release": read_text_file("/etc/os-release"),
+        "kernel": command_output(["uname", "-r"])["stdout"],
+        "architecture": command_output(["uname", "-m"])["stdout"],
+        "uptime": read_text_file("/proc/uptime"),
+        "load_average": read_text_file("/proc/loadavg"),
+        "cpu_count": os.cpu_count(),
+        "memory": memory,
+        "temperature_c": temperature_c,
+        "ip_addresses": command_output(["hostname", "-I"])["stdout"].split(),
+        "storage": parse_lsblk_json(),
+        "onboarding": read_state(),
+    }
+
+
+def nm_active_connections():
+    result = command_output(["nmcli", "-t", "-f", "NAME,UUID,TYPE,DEVICE", "connection", "show", "--active"])
+    if not result["ok"]:
+        return []
+    connections = []
+    for row in parse_kv_lines(result["stdout"]):
+        if len(row) >= 4:
+            connections.append({"name": row[0], "uuid": row[1], "type": row[2], "device": row[3]})
+    return connections
+
+
+def network_status():
+    interfaces = []
+    ip_result = command_output(["ip", "-j", "addr", "show"], timeout=6)
+    if ip_result["ok"]:
+        try:
+            interfaces = json.loads(ip_result["stdout"])
+        except json.JSONDecodeError:
+            interfaces = []
+    nm_status = command_output(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"])
+    devices = []
+    if nm_status["ok"]:
+        for row in parse_kv_lines(nm_status["stdout"]):
+            if len(row) >= 4:
+                devices.append({"device": row[0], "type": row[1], "state": row[2], "connection": row[3]})
+    return {
+        "connected": has_connectivity(),
+        "wifi_iface": AP_IFACE,
+        "networkmanager": has_command("nmcli"),
+        "active_connections": nm_active_connections(),
+        "devices": devices,
+        "interfaces": interfaces,
+        "onboarding": read_state(),
+    }
+
+
+def wifi_scan():
+    if not has_command("nmcli"):
+        return {"ok": False, "error": "NetworkManager/nmcli is not installed", "networks": []}
+    run(["nmcli", "device", "wifi", "rescan", "ifname", AP_IFACE], capture=True)
+    fields = "SSID,BSSID,CHAN,FREQ,RATE,SIGNAL,SECURITY"
+    result = command_output(["nmcli", "-t", "-f", fields, "device", "wifi", "list", "ifname", AP_IFACE], timeout=12)
+    networks = []
+    if result["ok"]:
+        for row in parse_kv_lines(result["stdout"]):
+            if len(row) >= 7 and row[0]:
+                networks.append({
+                    "ssid": row[0],
+                    "bssid": row[1],
+                    "channel": row[2],
+                    "frequency": row[3],
+                    "rate": row[4],
+                    "signal": row[5],
+                    "security": row[6],
+                })
+    return {"ok": result["ok"], "error": result["stderr"], "networks": networks}
+
+
+def service_name(name):
+    service = SERVICE_ALLOWLIST.get(name)
+    if not service:
+        raise ValueError(f"Unsupported service '{name}'")
+    return service
+
+
+def service_status(name, unit=None):
+    unit = unit or service_name(name)
+    active = command_output(["systemctl", "is-active", unit], timeout=5)
+    enabled = command_output(["systemctl", "is-enabled", unit], timeout=5)
+    return {
+        "name": name,
+        "unit": unit,
+        "active": active["stdout"] or "unknown",
+        "enabled": enabled["stdout"] or "unknown",
+        "available": active["returncode"] != 4,
+    }
+
+
+def services_status():
+    return {"services": [service_status(name, unit) for name, unit in SERVICE_ALLOWLIST.items()]}
+
+
+def service_action(name, action):
+    unit = service_name(name)
+    if action not in {"start", "stop", "restart", "enable", "disable"}:
+        raise ValueError(f"Unsupported service action '{action}'")
+    result = command_output(["systemctl", action, unit], timeout=20)
+    return {"ok": result["ok"], "service": service_status(name, unit), "stdout": result["stdout"], "stderr": result["stderr"]}
+
+
+def service_logs(name, lines=120):
+    unit = service_name(name)
+    lines = max(1, min(int(lines), 500))
+    result = command_output(["journalctl", "-u", unit, "-n", str(lines), "--no-pager"], timeout=10)
+    return {"ok": result["ok"], "name": name, "unit": unit, "logs": result["stdout"], "error": result["stderr"]}
+
+
+def glob_paths(patterns):
+    found = []
+    for pattern in patterns:
+        found.extend(str(path) for path in sorted(Path("/").glob(pattern.lstrip("/"))))
+    return found
+
+
+def autopilot_status():
+    serial_devices = glob_paths(["/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*", "/dev/ttyAMA*"])
+    return {
+        "supported": True,
+        "connected": bool(serial_devices),
+        "serial_devices": serial_devices,
+        "mavlink_router": service_status("yari-mavlink-router"),
+        "manager": service_status("yari-autopilot-manager"),
+        "message": "MAVLink heartbeat parsing is planned for the autopilot manager layer.",
+    }
+
+
+def read_mavlink_endpoints():
+    try:
+        return json.loads(MAVLINK_CONFIG_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {
+            "endpoints": [
+                {"name": "autopilot-serial", "type": "serial", "device": "/dev/ttyACM0", "baud": 57600, "enabled": False},
+                {"name": "qgc-udp", "type": "udp", "host": "0.0.0.0", "port": 14550, "enabled": False},
+            ]
+        }
+
+
+def write_mavlink_endpoints(payload):
+    endpoints = payload.get("endpoints")
+    if not isinstance(endpoints, list):
+        raise ValueError("endpoints must be a list")
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict) or endpoint.get("type") not in {"serial", "udp", "tcp"}:
+            raise ValueError("each endpoint needs type serial, udp, or tcp")
+    MAVLINK_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MAVLINK_CONFIG_FILE.write_text(json.dumps({"endpoints": endpoints}, indent=2) + "\n")
+    os.chmod(MAVLINK_CONFIG_FILE, 0o600)
+    return read_mavlink_endpoints()
+
+
+def ros_command(args, timeout=8):
+    shell_args = " ".join(args)
+    return command_output(["bash", "-lc", f"source /opt/ros/humble/setup.bash 2>/dev/null || true; {shell_args}"], timeout=timeout)
+
+
+def ros_status():
+    ros2 = command_output(["bash", "-lc", "command -v ros2"], timeout=5)
+    nodes = ros_command(["ros2", "node", "list"], timeout=8) if ros2["ok"] else {"ok": False, "stdout": "", "stderr": "ros2 command not found"}
+    return {
+        "installed": ros2["ok"],
+        "ros_distro": os.environ.get("ROS_DISTRO") or "humble",
+        "nodes": [line for line in nodes["stdout"].splitlines() if line],
+        "error": nodes["stderr"],
+        "service": service_status("yari-ros"),
+    }
+
+
+def ros_topics():
+    result = ros_command(["ros2", "topic", "list", "-t"], timeout=10)
+    topics = []
+    if result["ok"]:
+        for line in result["stdout"].splitlines():
+            match = re.match(r"^(\S+)\s+\[(.+)\]$", line.strip())
+            if match:
+                topics.append({"name": match.group(1), "type": match.group(2)})
+    return {"ok": result["ok"], "topics": topics, "error": result["stderr"]}
+
+
+def video_status():
+    return {
+        "devices": glob_paths(["/dev/video*", "/dev/media*"]),
+        "service": service_status("yari-video"),
+        "message": "Camera pipelines can publish ROS image topics, Foxglove streams, or Atlas WebRTC feeds.",
+    }
+
+
+def data_status():
+    bags = []
+    if MCAP_DIR.exists():
+        for path in sorted(MCAP_DIR.glob("**/*.mcap"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+            stat = path.stat()
+            bags.append({"path": str(path), "bytes": stat.st_size, "modified": int(stat.st_mtime)})
+    return {"mcap_dir": str(MCAP_DIR), "bags": bags, "service": service_status("yari-log-manager")}
+
+
+def factory_reset(reboot=False):
+    COMPLETE_FILE.unlink(missing_ok=True)
+    for path in (NM_CONNECTION_DIR / "yari-wifi.nmconnection", NETPLAN_DIR / "01-yari-wifi.yaml"):
+        path.unlink(missing_ok=True)
+    if has_command("nmcli"):
+        run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
+        run(["nmcli", "connection", "reload"], capture=True)
+    state = current_state({"mode": "factory-reset", "complete": False})
+    write_state(state)
+    if reboot:
+        reboot_soon()
+    return state
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
@@ -334,8 +637,47 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if urlparse(self.path).path == "/api/status":
-            self.send_json(200, current_state())
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        try:
+            if path in {"/api/status", "/api/device/status"}:
+                self.send_json(200, device_status())
+                return
+            if path == "/api/network/status":
+                self.send_json(200, network_status())
+                return
+            if path == "/api/network/wifi/scan":
+                self.send_json(200, wifi_scan())
+                return
+            if path == "/api/services":
+                self.send_json(200, services_status())
+                return
+            service_logs_match = re.match(r"^/api/services/([^/]+)/logs$", path)
+            if service_logs_match:
+                lines = query.get("lines", ["120"])[0]
+                self.send_json(200, service_logs(service_logs_match.group(1), lines))
+                return
+            if path == "/api/autopilot/status":
+                self.send_json(200, autopilot_status())
+                return
+            if path == "/api/mavlink/endpoints":
+                self.send_json(200, read_mavlink_endpoints())
+                return
+            if path == "/api/ros/status":
+                self.send_json(200, ros_status())
+                return
+            if path == "/api/ros/topics":
+                self.send_json(200, ros_topics())
+                return
+            if path == "/api/video/status":
+                self.send_json(200, video_status())
+                return
+            if path == "/api/data/status":
+                self.send_json(200, data_status())
+                return
+        except Exception as exc:
+            self.send_json(500, {"ok": False, "error": str(exc)})
             return
         super().do_GET()
 
@@ -347,18 +689,36 @@ class Handler(SimpleHTTPRequestHandler):
         except json.JSONDecodeError as exc:
             self.send_json(400, {"ok": False, "error": f"invalid json: {exc}"})
             return
-        if path == "/api/configure":
-            try:
+        try:
+            if path in {"/api/configure", "/api/network/wifi/save"}:
                 configure_wifi(str(payload.get("ssid") or ""), str(payload.get("password") or ""), str(payload.get("hostname") or ""))
                 self.send_json(200, {"ok": True, "message": "Wi-Fi saved. Device will reboot." if REBOOT_AFTER_SAVE else "Wi-Fi saved."})
                 if REBOOT_AFTER_SAVE:
                     reboot_soon()
-            except Exception as exc:
-                self.send_json(500, {"ok": False, "error": str(exc)})
-            return
-        if path == "/api/reboot":
-            self.send_json(200, {"ok": True, "message": "Rebooting."})
-            reboot_soon()
+                return
+            if path == "/api/reboot":
+                self.send_json(200, {"ok": True, "message": "Rebooting."})
+                reboot_soon()
+                return
+            if path == "/api/network/ap/enable":
+                ensure_ap()
+                self.send_json(200, {"ok": True, "state": read_state()})
+                return
+            if path == "/api/network/factory-reset":
+                self.send_json(200, {"ok": True, "state": factory_reset(bool(payload.get("reboot", False)))})
+                return
+            service_match = re.match(r"^/api/services/([^/]+)/(start|stop|restart|enable|disable)$", path)
+            if service_match:
+                self.send_json(200, service_action(service_match.group(1), service_match.group(2)))
+                return
+            if path == "/api/mavlink/endpoints":
+                self.send_json(200, {"ok": True, "config": write_mavlink_endpoints(payload)})
+                return
+            if path in {"/api/ros/recording/start", "/api/ros/recording/stop", "/api/ros/launch-profile"}:
+                self.send_json(202, {"ok": False, "supported": False, "message": "ROS launch and recording controls are reserved for the YARI ROS manager service."})
+                return
+        except Exception as exc:
+            self.send_json(500, {"ok": False, "error": str(exc)})
             return
         self.send_json(404, {"ok": False, "error": "not found"})
 
@@ -373,6 +733,7 @@ def serve():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if wait_for_connectivity(CONNECTIVITY_TIMEOUT):
         write_state(current_state({"mode": "client", "message": "network already connected"}))
+        serve_http("YARI device portal")
         return
     ensure_ap()
     serve_http(f"YARI onboarding setup AP {ap_ssid()}")
