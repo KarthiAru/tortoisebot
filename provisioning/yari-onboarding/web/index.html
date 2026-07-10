@@ -375,8 +375,11 @@
     async function refreshRos() {
       const data = await api('/api/ros/status');
       setPre('#ros-status', data);
-      setPre('#ros-topics', await api('/api/ros/topics'));
       setPre('#ros-recording', data.recording || {});
+      setPre('#ros-launch-state', data.launch || {});
+      const profiles = data.launch_profiles || [];
+      $('#ros-launch-profile').innerHTML = profiles.map((profile) => `<option value="${escapeHtml(profile.name)}">${escapeHtml(profile.label || profile.name)}${profile.enabled === false ? ' (disabled)' : ''}${profile.command_configured === false ? ' (needs command)' : ''}</option>`).join('');
+      setPre('#ros-topics', await api('/api/ros/topics'));
     }
     async function refreshVideo() {
       const data = await api('/api/video/status');
@@ -426,6 +429,14 @@
       try { setPre('#maintenance-output', await post('/api/mavlink/endpoints', JSON.parse($('#mavlink-config').value))); }
       catch (error) { setPre('#maintenance-output', `Save failed: ${error}`); }
     });
+    $('#ros-launch-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+      body.action = 'start';
+      setPre('#ros-launch-state', await post('/api/ros/launch-profile', body));
+      await refreshRos();
+    });
+    $('#ros-launch-stop').addEventListener('click', async () => { setPre('#ros-launch-state', await post('/api/ros/launch-profile', { action: 'stop' })); await refreshRos(); });
     $('#ros-record-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const body = Object.fromEntries(new FormData(event.currentTarget).entries());

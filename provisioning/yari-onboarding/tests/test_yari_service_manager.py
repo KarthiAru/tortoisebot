@@ -29,6 +29,7 @@ class YariServiceManagerTests(unittest.TestCase):
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.FLIGHT_LOG_DIR = root / "flight-logs"
+        self.module.ONBOARDING_STATE_FILE = root / "onboarding-state.json"
 
     def test_write_mavlink_router_config_maps_serial_and_udp_endpoints(self):
         config = self.module.write_mavlink_router_config([
@@ -149,6 +150,33 @@ class YariServiceManagerTests(unittest.TestCase):
         missing = self.module.start_video_stream({"stream_enabled": True}, ["/dev/video0"])
         self.assertEqual(missing["state"], "ffmpeg-missing")
 
+
+
+    def test_agent_status_reports_remote_access_and_telemetry(self):
+        secrets = Path(self.tmp.name) / "secrets.json"
+        config = Path(self.tmp.name) / "portal.json"
+        secrets.write_text('{"atlas_token":"secret","foxglove_token":"fox"}')
+        config.write_text('{"atlas_url":"http://atlas/api/v1","device_id":"dev-1"}')
+        self.module.ONBOARDING_STATE_FILE.write_text('{"mode":"client","device_id":"state-dev"}')
+        old_secrets = self.module.os.environ.get("YARI_PORTAL_SECRETS_FILE")
+        old_config = self.module.os.environ.get("YARI_PORTAL_CONFIG_FILE")
+        self.module.os.environ["YARI_PORTAL_SECRETS_FILE"] = str(secrets)
+        self.module.os.environ["YARI_PORTAL_CONFIG_FILE"] = str(config)
+        try:
+            status = self.module.agent_status()
+        finally:
+            if old_secrets is None:
+                self.module.os.environ.pop("YARI_PORTAL_SECRETS_FILE", None)
+            else:
+                self.module.os.environ["YARI_PORTAL_SECRETS_FILE"] = old_secrets
+            if old_config is None:
+                self.module.os.environ.pop("YARI_PORTAL_CONFIG_FILE", None)
+            else:
+                self.module.os.environ["YARI_PORTAL_CONFIG_FILE"] = old_config
+        self.assertTrue(status["remote_access"]["atlas"]["ready"])
+        self.assertTrue(status["remote_access"]["foxglove"]["ready"])
+        self.assertEqual(status["telemetry"]["device_id"], "dev-1")
+        self.assertIn("ip_addresses", status["telemetry"])
 
     def test_process_upload_queue_waits_for_atlas_config(self):
         self.module.write_upload_queue([{"id": "one", "path": "/tmp/missing.mcap", "status": "queued"}])

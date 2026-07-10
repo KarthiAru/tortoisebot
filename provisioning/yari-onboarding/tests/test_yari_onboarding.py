@@ -84,6 +84,15 @@ class YariOnboardingTests(unittest.TestCase):
         rows = self.module.parse_kv_lines("Brindavan:00\\:5F\\:67\\:DB\\:25\\:97:8:WPA2")
         self.assertEqual(rows[0], ["Brindavan", "00:5F:67:DB:25:97", "8", "WPA2"])
 
+
+    def test_services_status_includes_manager_state(self):
+        self.module.SERVICE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.SERVICE_STATE_DIR / "agent.json").write_text('{"role":"agent","remote_access":{"atlas":{"ready":true}},"updated":1}')
+        status = self.module.services_status()
+        agent = next(item for item in status["services"] if item["name"] == "yari-agent")
+        self.assertTrue(agent["manager_state"]["available"])
+        self.assertTrue(agent["manager_state"]["remote_access"]["atlas"]["ready"])
+
     def test_service_name_rejects_unknown_services(self):
         self.assertEqual(self.module.service_name("yari-onboarding"), "yari-onboarding.service")
         with self.assertRaises(ValueError):

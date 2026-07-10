@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import time
 import uuid
@@ -18,6 +19,7 @@ MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
 FLIGHT_LOG_DIR = Path(os.environ.get("YARI_FLIGHT_LOG_DIR", "/var/lib/yari/flight-logs"))
 FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
+ONBOARDING_STATE_FILE = Path(os.environ.get("YARI_ONBOARDING_STATE_FILE", "/var/lib/yari/onboarding/state.json"))
 ROS_LAUNCH_CONFIG_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_CONFIG_FILE", "/etc/yari/ros-launch-profiles.json"))
 ROS_LAUNCH_STATE_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_STATE_FILE", "/var/lib/yari/onboarding/ros-launch.json"))
 
@@ -49,6 +51,13 @@ def read_json(path, default):
         return json.loads(path.read_text())
     except (FileNotFoundError, PermissionError, OSError, json.JSONDecodeError):
         return default
+
+
+def read_text(path):
+    try:
+        return Path(path).read_text().strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
 
 
 def write_status(role, payload):
@@ -678,6 +687,49 @@ def ros_status():
     }
 
 
+def telemetry_snapshot(config):
+    uptime = read_text("/proc/uptime")
+    meminfo = read_text("/proc/meminfo")
+    memory = {}
+    for line in meminfo.splitlines():
+        key, _, value = line.partition(":")
+        if key in {"MemTotal", "MemAvailable", "SwapTotal", "SwapFree"}:
+            memory[key] = value.strip()
+    temperature = read_text("/sys/class/thermal/thermal_zone0/temp")
+    temperature_c = round(int(temperature) / 1000, 1) if temperature.isdigit() else None
+    ips = command(["hostname", "-I"], timeout=4)
+    onboarding = read_json(ONBOARDING_STATE_FILE, {})
+    return {
+        "device_id": config.get("device_id") or onboarding.get("device_id"),
+        "hostname": socket.gethostname(),
+        "ip_addresses": ips["stdout"].split() if ips.get("ok") else [],
+        "uptime": uptime,
+        "load_average": read_text("/proc/loadavg"),
+        "memory": memory,
+        "temperature_c": temperature_c,
+        "onboarding_mode": onboarding.get("mode"),
+    }
+
+
+def remote_access_status(config, secrets):
+    atlas_ready = bool(config.get("atlas_url") and secrets.get("atlas_token"))
+    foxglove_ready = bool(secrets.get("foxglove_token"))
+    return {
+        "atlas": {
+            "ready": atlas_ready,
+            "url": config.get("atlas_url"),
+            "token_configured": bool(secrets.get("atlas_token")),
+            "message": "Atlas pairing token configured" if atlas_ready else "Set Atlas URL and device token in Setup",
+        },
+        "foxglove": {
+            "ready": foxglove_ready,
+            "token_configured": bool(secrets.get("foxglove_token")),
+            "bridge_url": config.get("foxglove_bridge_url") or "ws://<device-ip>:8765",
+            "message": "Foxglove token configured" if foxglove_ready else "Set Foxglove token in Setup for remote access",
+        },
+    }
+
+
 def agent_status():
     secrets_file = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
     config_file = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
@@ -690,6 +742,8 @@ def agent_status():
         "atlas_upload_url": atlas_upload_endpoint(config),
         "atlas_token_configured": bool(secrets.get("atlas_token")),
         "foxglove_token_configured": bool(secrets.get("foxglove_token")),
+        "remote_access": remote_access_status(config, secrets),
+        "telemetry": telemetry_snapshot(config),
         "upload_queue": uploads,
     }
 

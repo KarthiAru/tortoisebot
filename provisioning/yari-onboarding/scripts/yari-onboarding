@@ -646,8 +646,23 @@ def service_status(name, unit=None):
     }
 
 
+def service_manager_role_for_name(name):
+    if name == "yari-agent":
+        return "agent"
+    if name.startswith("yari-"):
+        return name.removeprefix("yari-")
+    return ""
+
+
 def services_status():
-    return {"services": [service_status(name, unit) for name, unit in SERVICE_ALLOWLIST.items()]}
+    services = []
+    for name, unit in SERVICE_ALLOWLIST.items():
+        status = service_status(name, unit)
+        role = service_manager_role_for_name(name)
+        if role:
+            status["manager_state"] = service_manager_status(role)
+        services.append(status)
+    return {"services": services}
 
 
 def service_action(name, action):
