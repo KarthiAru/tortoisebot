@@ -195,6 +195,17 @@ class YariOnboardingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.module.save_video_settings({"fps": "20", "encoding": "mjpeg", "rtsp_url": "http://bad"})
 
+    def test_video_preview_status_exposes_snapshot_endpoint(self):
+        self.module.has_command = lambda name: name == "ffmpeg"
+        status = self.module.video_preview_status({"device": "/dev/video0"}, ["/dev/video0"])
+        self.assertTrue(status["supported"])
+        self.assertEqual(status["endpoint"], "/api/video/snapshot")
+
+    def test_capture_video_snapshot_requires_camera(self):
+        self.module.has_command = lambda name: True
+        with self.assertRaises(ValueError):
+            self.module.capture_video_snapshot()
+
     def test_cleanup_data_logs_requires_known_candidates_and_confirm(self):
         self.module.MCAP_DIR.mkdir(parents=True, exist_ok=True)
         log = self.module.MCAP_DIR / "sample.mcap"

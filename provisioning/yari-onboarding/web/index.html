@@ -290,6 +290,7 @@
     <section id="video">
       <div class="grid">
         <div class="card"><h2>Cameras</h2><pre id="video-status">Loading...</pre></div>
+        <div class="card"><h2>Preview</h2><div class="row"><button class="secondary" id="video-preview-refresh" type="button">Refresh preview</button></div><img id="video-preview" alt="Camera preview" style="display:none;width:100%;max-height:360px;object-fit:contain;border:1px solid var(--atlas-border);border-radius:8px;background:var(--atlas-surface-raised);margin-top:12px;"><pre id="video-preview-state">Loading...</pre></div>
         <div class="card"><h2>Stream Settings</h2><form id="video-settings-form"><label><input name="stream_enabled" type="checkbox"> Enable RTSP stream</label><label>Camera device<input name="device" placeholder="/dev/video0"></label><label>RTSP URL<input name="rtsp_url" placeholder="rtsp://127.0.0.1:8554/yari-video"></label><label>Frame size<input name="size" placeholder="640x480"></label><label>FPS<input name="fps" type="number" min="1" max="60" value="15"></label><label>Encoding<select name="encoding"><option value="mjpeg">MJPEG</option><option value="h264">H.264</option><option value="h265">H.265</option><option value="bgr8">BGR8</option><option value="mono8">Mono8</option></select></label><label>Bandwidth kbps<input name="bandwidth_kbps" type="number" min="64" placeholder="auto"></label><button type="submit">Save stream settings</button></form><pre id="video-settings">Loading...</pre></div>
       </div>
     </section>
@@ -384,7 +385,8 @@
     async function refreshVideo() {
       const data = await api('/api/video/status');
       setPre('#video-status', data);
-      setPre('#video-settings', { profiles: data.profiles, settings: data.settings, preview: data.preview });
+      setPre('#video-preview-state', data.preview || {});
+      setPre('#video-settings', { profiles: data.profiles, settings: data.settings, preview: data.preview, stream_targets: data.stream_targets });
       if (data.settings) {
         $('#video-settings-form [name="stream_enabled"]').checked = Boolean(data.settings.stream_enabled);
         $('#video-settings-form [name="device"]').value = data.settings.device || '';
@@ -445,6 +447,14 @@
       await refreshRos();
     });
     $('#ros-record-stop').addEventListener('click', async () => { setPre('#ros-recording', await post('/api/ros/recording/stop')); await refreshRos(); });
+    $('#video-preview-refresh').addEventListener('click', async () => {
+      const img = $('#video-preview');
+      img.src = `/api/video/snapshot?ts=${Date.now()}`;
+      img.style.display = 'block';
+      setPre('#video-preview-state', 'Refreshing preview...');
+    });
+    $('#video-preview').addEventListener('load', () => setPre('#video-preview-state', 'Preview updated.'));
+    $('#video-preview').addEventListener('error', () => setPre('#video-preview-state', 'Preview unavailable. Check camera device and ffmpeg.'));
     $('#video-settings-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const body = Object.fromEntries(new FormData(event.currentTarget).entries());

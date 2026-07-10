@@ -1158,14 +1158,51 @@ def cleanup_data_logs(payload):
     return {"ok": True, "dry_run": False, "deleted": deleted, "bytes": sum(item["bytes"] for item in deleted)}
 
 
+def video_preview_status(settings, devices):
+    device = settings.get("device") or next((item for item in devices if "/dev/video" in item), "")
+    ffmpeg_available = has_command("ffmpeg")
+    return {
+        "supported": bool(device and ffmpeg_available),
+        "endpoint": "/api/video/snapshot",
+        "device": device,
+        "requires": "ffmpeg and a /dev/video* camera",
+        "message": "Local JPEG snapshot preview is available" if device and ffmpeg_available else "Install ffmpeg and connect a camera for local preview",
+    }
+
+
+def capture_video_snapshot():
+    settings = read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "device": "", "size": "640x480"})
+    devices = glob_paths(["/dev/video*"])
+    device = settings.get("device") or (devices[0] if devices else "")
+    if not device:
+        raise ValueError("no /dev/video* camera is available")
+    if not has_command("ffmpeg"):
+        raise ValueError("ffmpeg is required for video snapshot preview")
+    size = str(settings.get("size") or "640x480")
+    result = subprocess.run([
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "v4l2", "-video_size", size,
+        "-i", str(device), "-frames:v", "1", "-f", "mjpeg", "pipe:1"
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=8)
+    if result.returncode != 0 or not result.stdout:
+        raise RuntimeError(result.stderr.decode("utf-8", errors="replace") or "failed to capture video snapshot")
+    return result.stdout
+
+
 def video_status():
     manager_payload = service_manager_status("video")
+    devices = manager_payload.get("devices", glob_paths(["/dev/video*", "/dev/media*"]))
+    settings = manager_payload.get("settings", read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "device": "", "size": "640x480"}))
     return {
-        "devices": manager_payload.get("devices", glob_paths(["/dev/video*", "/dev/media*"])),
+        "devices": devices,
         "service": service_status("yari-video"),
         "profiles": manager_payload.get("profiles", ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"]),
-        "settings": manager_payload.get("settings", read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None})),
-        "preview": {"supported": True, "message": "Preview is available through ROS/Foxglove/Atlas stream profiles when the video service is running."},
+        "settings": settings,
+        "preview": video_preview_status(settings, devices),
+        "stream_targets": {
+            "rtsp": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video",
+            "foxglove_topic": settings.get("foxglove_topic") or "/camera/image_raw/compressed",
+            "atlas_webrtc": settings.get("atlas_webrtc") or {"configured": False, "message": "Atlas WebRTC publishing is handled by the Atlas bridge when configured."},
+        },
         "manager_state": manager_payload,
         "message": "Camera pipelines can publish ROS image topics, Foxglove streams, RTSP, or Atlas WebRTC feeds.",
     }
@@ -1310,6 +1347,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_binary(self, code, content_type, body):
+        self.send_response(code)
+        self.send_header("content-type", content_type)
+        self.send_header("cache-control", "no-store")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1367,6 +1412,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/video/status":
                 self.send_json(200, video_status())
+                return
+            if path == "/api/video/snapshot":
+                self.send_binary(200, "image/jpeg", capture_video_snapshot())
                 return
             if path == "/api/data/status":
                 self.send_json(200, data_status())
