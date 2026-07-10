@@ -13,6 +13,8 @@ CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
+FLIGHT_LOG_DIR = Path(os.environ.get("YARI_FLIGHT_LOG_DIR", "/var/lib/yari/flight-logs"))
+FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
 
 RUNNING = True
 
@@ -285,6 +287,156 @@ def autopilot_manager_status():
 
 
 
+
+def mavlink_candidates(endpoints):
+    return [endpoint for endpoint in endpoints if endpoint.get("enabled") and endpoint.get("type") in {"serial", "udp"}]
+
+
+def connect_mavlink_endpoint(endpoint, timeout=2.5):
+    mavutil, import_error = import_mavutil()
+    if mavutil is None:
+        return None, None, {"ok": False, "state": "pymavlink-missing", "error": import_error}
+    target, baud = mavlink_connection_target(endpoint)
+    if not target:
+        return None, mavutil, {"ok": False, "state": "invalid-endpoint"}
+    try:
+        kwargs = {"autoreconnect": True}
+        if baud:
+            kwargs["baud"] = baud
+        connection = mavutil.mavlink_connection(target, **kwargs)
+        heartbeat = connection.wait_heartbeat(timeout=timeout)
+        if heartbeat is None:
+            return None, mavutil, {"ok": False, "state": "heartbeat-timeout"}
+        return connection, mavutil, {"ok": True, "endpoint": endpoint}
+    except Exception as exc:
+        return None, mavutil, {"ok": False, "state": "connection-error", "error": str(exc)}
+
+
+def list_remote_flight_logs(endpoints, timeout=2.5):
+    candidates = mavlink_candidates(endpoints)
+    if not candidates:
+        return {"ok": False, "state": "no-enabled-mavlink-endpoint", "logs": []}
+    errors = []
+    for endpoint in candidates:
+        connection, _mavutil, status = connect_mavlink_endpoint(endpoint, timeout=timeout)
+        if not status.get("ok"):
+            errors.append(status)
+            continue
+        logs = []
+        try:
+            connection.mav.log_request_list_send(connection.target_system, connection.target_component, 0, 0xFFFF)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                msg = connection.recv_match(type="LOG_ENTRY", blocking=True, timeout=0.2)
+                if msg is None:
+                    continue
+                logs.append({
+                    "id": getattr(msg, "id", None),
+                    "num_logs": getattr(msg, "num_logs", None),
+                    "last_log_num": getattr(msg, "last_log_num", None),
+                    "time_utc": getattr(msg, "time_utc", None),
+                    "size": getattr(msg, "size", None),
+                })
+                if len(logs) >= 100:
+                    break
+        except Exception as exc:
+            errors.append({"state": "log-list-error", "error": str(exc)})
+        finally:
+            try:
+                connection.close()
+            except Exception:
+                pass
+        return {"ok": True, "state": "listed", "endpoint": endpoint, "logs": logs}
+    return {"ok": False, "state": "unreachable", "logs": [], "errors": errors}
+
+
+def read_flight_log_downloads():
+    payload = read_json(FLIGHT_LOG_DOWNLOADS_FILE, {"items": []})
+    return [item for item in payload.get("items", []) if isinstance(item, dict)] if isinstance(payload, dict) else []
+
+
+def write_flight_log_downloads(items):
+    FLIGHT_LOG_DOWNLOADS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FLIGHT_LOG_DOWNLOADS_FILE.write_text(json.dumps({"items": items, "updated": int(time.time())}, indent=2) + "\n")
+    os.chmod(FLIGHT_LOG_DOWNLOADS_FILE, 0o600)
+
+
+def queue_flight_log_download(log_id, endpoint_name=""):
+    items = read_flight_log_downloads()
+    item_id = f"log-{log_id}-{endpoint_name or 'default'}"
+    existing = next((item for item in items if item.get("id") == item_id), None)
+    item = existing or {"id": item_id, "queued": int(time.time())}
+    item.update({"log_id": int(log_id), "endpoint_name": endpoint_name, "status": "queued", "updated": int(time.time())})
+    if existing is None:
+        items.append(item)
+    write_flight_log_downloads(items)
+    return item
+
+
+def download_remote_log(connection, log_id, destination, timeout=8):
+    chunks = []
+    ofs = 0
+    chunk_size = 90
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        connection.mav.log_request_data_send(connection.target_system, connection.target_component, int(log_id), ofs, chunk_size)
+        msg = connection.recv_match(type="LOG_DATA", blocking=True, timeout=0.5)
+        if msg is None:
+            continue
+        count = int(getattr(msg, "count", 0) or 0)
+        data = bytes(getattr(msg, "data", [])[:count])
+        chunks.append(data)
+        ofs += count
+        if count < chunk_size:
+            break
+    if not chunks:
+        raise RuntimeError("no LOG_DATA chunks received")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(b"".join(chunks))
+    return {"path": str(destination), "bytes": destination.stat().st_size}
+
+
+def process_flight_log_downloads(endpoints):
+    items = read_flight_log_downloads()
+    candidates = mavlink_candidates(endpoints)
+    if not items:
+        return {"items": [], "counts": {}, "message": "no queued flight log downloads"}
+    if not candidates:
+        return {"items": items, "counts": download_counts(items), "state": "no-enabled-mavlink-endpoint"}
+    changed = False
+    for item in items:
+        if item.get("status") != "queued":
+            continue
+        endpoint = next((candidate for candidate in candidates if not item.get("endpoint_name") or candidate.get("name") == item.get("endpoint_name")), candidates[0])
+        connection, _mavutil, status = connect_mavlink_endpoint(endpoint)
+        if not status.get("ok"):
+            item.update({"status": "failed", "error": status, "updated": int(time.time())})
+            changed = True
+            continue
+        try:
+            destination = FLIGHT_LOG_DIR / f"autopilot-log-{item.get('log_id')}.bin"
+            result = download_remote_log(connection, item.get("log_id"), destination)
+            item.update({"status": "downloaded", "path": result["path"], "bytes": result["bytes"], "updated": int(time.time())})
+        except Exception as exc:
+            item.update({"status": "failed", "error": str(exc), "updated": int(time.time())})
+        finally:
+            changed = True
+            try:
+                connection.close()
+            except Exception:
+                pass
+    if changed:
+        write_flight_log_downloads(items)
+    return {"items": items, "counts": download_counts(items), "download_dir": str(FLIGHT_LOG_DIR)}
+
+
+def download_counts(items):
+    counts = {}
+    for item in items:
+        status = item.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
 def read_upload_queue():
     payload = read_json(UPLOAD_QUEUE_FILE, {"items": []})
     items = payload.get("items", []) if isinstance(payload, dict) else []
@@ -325,11 +477,16 @@ def log_manager_status():
         for path in sorted(MCAP_DIR.glob("**/*.mcap"), key=lambda p: p.stat().st_mtime, reverse=True)[:25]:
             stat = path.stat()
             mcap_logs.append({"path": str(path), "bytes": stat.st_size, "modified": int(stat.st_mtime)})
+    endpoints = read_json(MAVLINK_CONFIG_FILE, {"endpoints": []}).get("endpoints", [])
+    remote_logs = list_remote_flight_logs(endpoints, timeout=1.5)
+    downloads = process_flight_log_downloads(endpoints)
     return {
         **service_status("log-manager"),
         "mcap_dir": str(MCAP_DIR),
         "mcap_logs": mcap_logs,
-        "flight_logs": glob_paths(["/var/log/*/*.ulg", "/var/log/*.ulg", "/home/*/**/*.ulg", "/home/*/**/*.BIN", "/home/*/**/*.bin"], 100),
+        "flight_logs": glob_paths(["/var/log/*/*.ulg", "/var/log/*.ulg", "/home/*/**/*.ulg", "/home/*/**/*.BIN", "/home/*/**/*.bin", str(FLIGHT_LOG_DIR / "*")], 100),
+        "remote_flight_logs": remote_logs,
+        "flight_log_downloads": downloads,
         "upload_queue": upload_queue_summary(),
     }
 

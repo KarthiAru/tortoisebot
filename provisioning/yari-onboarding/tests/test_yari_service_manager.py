@@ -27,6 +27,8 @@ class YariServiceManagerTests(unittest.TestCase):
         self.module.CONFIG_DIR = root / "config"
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
+        self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
+        self.module.FLIGHT_LOG_DIR = root / "flight-logs"
 
     def test_write_mavlink_router_config_maps_serial_and_udp_endpoints(self):
         config = self.module.write_mavlink_router_config([
@@ -96,6 +98,42 @@ class YariServiceManagerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "MANUAL")
         self.assertTrue(result["armed"])
 
+
+
+    def test_list_remote_flight_logs_uses_log_entries(self):
+        class FakeLogEntry:
+            id = 4
+            num_logs = 5
+            last_log_num = 4
+            time_utc = 123
+            size = 456
+
+        class FakeMav:
+            def log_request_list_send(self, *args):
+                self.requested = args
+
+        class FakeConnection:
+            target_system = 1
+            target_component = 1
+            mav = FakeMav()
+            calls = 0
+            def wait_heartbeat(self, timeout=0):
+                return object()
+            def recv_match(self, type=None, blocking=False, timeout=0):
+                self.calls += 1
+                return FakeLogEntry() if self.calls == 1 else None
+            def close(self):
+                pass
+
+        class FakeMavutil:
+            def mavlink_connection(self, target, **kwargs):
+                return FakeConnection()
+
+        self.module.import_mavutil = lambda: (FakeMavutil(), None)
+        result = self.module.list_remote_flight_logs([{"name": "fc", "type": "serial", "device": "/dev/ttyACM0", "enabled": True}], timeout=0.1)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["logs"][0]["id"], 4)
+        self.assertEqual(result["logs"][0]["size"], 456)
 
     def test_video_pipeline_args_builds_rtsp_ffmpeg_command(self):
         args = self.module.video_pipeline_args({"fps": 10, "encoding": "h264", "size": "320x240", "rtsp_url": "rtsp://127.0.0.1:8554/test"}, "/dev/video0")

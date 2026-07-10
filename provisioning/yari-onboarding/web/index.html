@@ -295,7 +295,7 @@
     <section id="data">
       <div class="grid">
         <div class="card"><h2>MCAP and Flight Logs</h2><pre id="data-status">Loading...</pre></div>
-        <div class="card"><h2>Upload and Cleanup</h2><div class="row"><button id="data-upload-enqueue" type="button">Queue uploads</button><button class="secondary" id="data-upload-retry" type="button">Retry queue</button><button class="secondary" id="data-upload-clear" type="button">Clear completed</button><button class="secondary" id="data-cleanup-preview" type="button">Preview cleanup</button><button class="danger" id="data-cleanup-confirm" type="button">Delete listed logs</button></div><pre id="data-upload">Loading...</pre></div>
+        <div class="card"><h2>Upload and Cleanup</h2><form id="flight-log-download-form"><label>Autopilot log ID<input name="log_id" type="number" min="0" placeholder="0"></label><label>Endpoint name<input name="endpoint_name" placeholder="optional"></label><div class="row"><button type="submit">Queue flight log download</button><button class="secondary" id="flight-log-retry" type="button">Retry downloads</button></div></form><div class="row"><button id="data-upload-enqueue" type="button">Queue uploads</button><button class="secondary" id="data-upload-retry" type="button">Retry queue</button><button class="secondary" id="data-upload-clear" type="button">Clear completed</button><button class="secondary" id="data-cleanup-preview" type="button">Preview cleanup</button><button class="danger" id="data-cleanup-confirm" type="button">Delete listed logs</button></div><pre id="data-upload">Loading...</pre></div>
       </div>
     </section>
   </main>
@@ -393,7 +393,7 @@
     async function refreshData() {
       const data = await api('/api/data/status');
       setPre('#data-status', { mcap_dir: data.mcap_dir, mcap_logs: data.mcap_logs, flight_logs: data.flight_logs, service: data.service });
-      setPre('#data-upload', { upload_queue: data.upload_queue, storage_cleanup: data.storage_cleanup });
+      setPre('#data-upload', { remote_flight_logs: data.remote_flight_logs, flight_log_downloads: data.flight_log_downloads, upload_queue: data.upload_queue, storage_cleanup: data.storage_cleanup });
     }
     async function refreshAll() {
       await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshAutopilot(), refreshRos(), refreshVideo(), refreshData()]);
@@ -438,6 +438,13 @@
       setPre('#video-settings', await post('/api/video/settings', body));
       await refreshVideo();
     });
+    $('#flight-log-download-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+      setPre('#data-upload', await post('/api/data/flight-logs/download', body));
+      await refreshData();
+    });
+    $('#flight-log-retry').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/flight-logs/retry', {})); await refreshData(); });
     $('#data-upload-enqueue').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/enqueue', {})); await refreshData(); });
     $('#data-upload-retry').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/retry', {})); await refreshData(); });
     $('#data-upload-clear').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/clear', { keep_failed: true })); await refreshData(); });

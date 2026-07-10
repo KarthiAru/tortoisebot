@@ -37,6 +37,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.ROS_RECORDING_LOG_FILE = root / "ros-record.log"
         self.module.MCAP_DIR = root / "mcap"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
+        self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
@@ -164,6 +165,17 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertFalse(result["dry_run"])
         self.assertFalse(log.exists())
 
+
+
+    def test_queue_flight_log_download_and_retry(self):
+        queued = self.module.queue_flight_log_download({"log_id": "7", "endpoint_name": "fc"})
+        self.assertEqual(queued["item"]["log_id"], 7)
+        self.assertEqual(queued["item"]["status"], "queued")
+        item = queued["item"]
+        item["status"] = "failed"
+        self.module.write_flight_log_downloads([item])
+        retried = self.module.retry_flight_log_downloads({})
+        self.assertEqual(retried["downloads"]["items"][0]["status"], "queued")
 
     def test_upload_queue_enqueue_retry_and_clear(self):
         self.module.MCAP_DIR.mkdir(parents=True, exist_ok=True)

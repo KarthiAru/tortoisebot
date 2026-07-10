@@ -47,6 +47,7 @@ ROS_RECORDING_LOG_FILE = STATE_DIR / "rosbag-record.log"
 ROS_RECORDING_CONFIG_FILE = Path(os.environ.get("YARI_ROS_RECORDING_CONFIG_FILE", "/etc/yari/ros-recording.json"))
 VIDEO_CONFIG_FILE = Path(os.environ.get("YARI_VIDEO_CONFIG_FILE", "/etc/yari/video.json"))
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
+FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
 SERVICE_ALLOWLIST = {
     "yari-onboarding": "yari-onboarding.service",
     "yari-agent": "yari-agent.service",
@@ -882,6 +883,45 @@ def log_cleanup_candidates():
 
 
 
+
+def read_flight_log_downloads():
+    payload = read_json_file(FLIGHT_LOG_DOWNLOADS_FILE, {"items": []})
+    return {"items": [item for item in payload.get("items", []) if isinstance(item, dict)]} if isinstance(payload, dict) else {"items": []}
+
+
+def write_flight_log_downloads(items):
+    FLIGHT_LOG_DOWNLOADS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FLIGHT_LOG_DOWNLOADS_FILE.write_text(json.dumps({"items": items, "updated": int(time.time())}, indent=2) + "\n")
+    os.chmod(FLIGHT_LOG_DOWNLOADS_FILE, 0o600)
+
+
+def queue_flight_log_download(payload):
+    log_id = payload.get("log_id")
+    if log_id in {None, ""}:
+        raise ValueError("log_id is required")
+    endpoint_name = str(payload.get("endpoint_name") or "")
+    item_id = f"log-{int(log_id)}-{endpoint_name or 'default'}"
+    items = read_flight_log_downloads()["items"]
+    existing = next((item for item in items if item.get("id") == item_id), None)
+    item = existing or {"id": item_id, "queued": int(time.time())}
+    item.update({"log_id": int(log_id), "endpoint_name": endpoint_name, "status": "queued", "updated": int(time.time())})
+    if existing is None:
+        items.append(item)
+    write_flight_log_downloads(items)
+    return {"ok": True, "item": item, "downloads": read_flight_log_downloads()}
+
+
+def retry_flight_log_downloads(payload):
+    ids = set(payload.get("ids") or [])
+    items = read_flight_log_downloads()["items"]
+    for item in items:
+        if not ids or item.get("id") in ids:
+            if item.get("status") in {"failed", "missing"}:
+                item["status"] = "queued"
+                item["updated"] = int(time.time())
+    write_flight_log_downloads(items)
+    return {"ok": True, "downloads": read_flight_log_downloads()}
+
 def read_upload_queue():
     payload = read_json_file(UPLOAD_QUEUE_FILE, {"items": []})
     items = payload.get("items", []) if isinstance(payload, dict) else []
@@ -1000,6 +1040,8 @@ def data_status():
         "flight_logs": manager_payload.get("flight_logs", flight_logs),
         "upload_queue": manager_payload.get("upload_queue", read_upload_queue().get("items", [])),
         "storage_cleanup": {"supported": True, "message": "Manual cleanup should be confirmed by the operator before deleting logs."},
+        "remote_flight_logs": manager_payload.get("remote_flight_logs", {"ok": False, "state": "log-manager-status-unavailable", "logs": []}),
+        "flight_log_downloads": manager_payload.get("flight_log_downloads", read_flight_log_downloads()),
         "service": service_status("yari-log-manager"),
         "manager_state": manager_payload,
     }
@@ -1244,6 +1286,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/video/settings":
                 self.send_json(200, {"ok": True, "settings": save_video_settings(payload)})
+                return
+            if path == "/api/data/flight-logs/download":
+                self.send_json(200, queue_flight_log_download(payload))
+                return
+            if path == "/api/data/flight-logs/retry":
+                self.send_json(200, retry_flight_log_downloads(payload))
                 return
             if path == "/api/data/uploads/enqueue":
                 self.send_json(200, enqueue_uploads(payload))
