@@ -1,0 +1,13 @@
+[Unit]
+Description=YARI OS Atlas/Foxglove pairing, remote access, telemetry, and upload queue
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yari-service-placeholder yari-agent
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

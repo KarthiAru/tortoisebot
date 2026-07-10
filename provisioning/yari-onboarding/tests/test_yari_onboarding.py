@@ -29,6 +29,11 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.NM_CONNECTION_DIR = root / "nm"
         self.module.NETPLAN_DIR = root / "netplan"
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
+        self.module.PORTAL_SECRETS_FILE = root / "secrets.json"
+        self.module.PORTAL_CONFIG_FILE = root / "portal.json"
+        self.module.DEVICE_ID_FILE = root / "device-id"
+        self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
+        self.module.APPLY_NETWORK = False
         self.commands = []
         self.module.run = self.fake_run
         self.module.has_command = lambda name: name == "nmcli"
@@ -89,6 +94,28 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertFalse((self.module.NM_CONNECTION_DIR / "yari-wifi.nmconnection").exists())
         self.assertFalse((self.module.NETPLAN_DIR / "01-yari-wifi.yaml").exists())
         self.assertFalse(state["complete"])
+
+    def test_save_pairing_tokens_redacts_status_and_writes_secret_file(self):
+        status = self.module.save_pairing_tokens("atlas-secret", "fox-secret")
+        self.assertTrue(self.module.PORTAL_SECRETS_FILE.exists())
+        self.assertEqual(oct(self.module.PORTAL_SECRETS_FILE.stat().st_mode & 0o777), "0o600")
+        self.assertTrue(status["atlas_token"]["configured"])
+        self.assertNotIn("atlas-secret", str(status))
+
+    def test_regenerate_device_id_writes_override(self):
+        state = self.module.regenerate_device_id()
+        self.assertTrue(self.module.DEVICE_ID_FILE.exists())
+        self.assertEqual(state["device_id"], self.module.DEVICE_ID_FILE.read_text().strip())
+
+    def test_network_status_includes_phase_one_placeholders(self):
+        status = self.module.network_status()
+        self.assertIn("static_ip", status["config"])
+        self.assertIn("lte", status["config"])
+
+    def test_support_bundle_contains_status_files(self):
+        bundle = self.module.support_bundle()
+        self.assertTrue(bundle.exists())
+        self.assertEqual(bundle.suffixes[-2:], [".tar", ".gz"])
 
 
 if __name__ == "__main__":

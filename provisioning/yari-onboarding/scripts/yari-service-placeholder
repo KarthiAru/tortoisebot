@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SERVICE_NAME="${1:-yari-service}"
+echo "${SERVICE_NAME} placeholder started. Replace this unit ExecStart with the real YARI OS service implementation." >&2
+trap 'echo "${SERVICE_NAME} placeholder stopping" >&2; exit 0' TERM INT
+while true; do
+  sleep 3600 &
+  wait $!
+done

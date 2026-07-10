@@ -1,0 +1,13 @@
+[Unit]
+Description=YARI OS PX4/ArduPilot detection and health state
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yari-service-placeholder yari-autopilot-manager
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

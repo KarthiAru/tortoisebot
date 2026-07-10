@@ -1,0 +1,13 @@
+[Unit]
+Description=YARI OS MAVLink serial/UDP/TCP routing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yari-service-placeholder yari-mavlink-router
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

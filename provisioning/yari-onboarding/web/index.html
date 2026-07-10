@@ -171,20 +171,29 @@
       <button data-tab="status">Status</button>
       <button data-tab="network">Network</button>
       <button data-tab="services">Services</button>
-      <button data-tab="platform">Autopilot + ROS</button>
+      <button data-tab="logs">Logs</button>
       <button data-tab="maintenance">Maintenance</button>
+      <button data-tab="autopilot">Autopilot</button>
+      <button data-tab="ros">ROS 2</button>
+      <button data-tab="video">Video</button>
+      <button data-tab="data">Data</button>
     </nav>
 
     <section id="setup" class="active">
       <div class="grid">
         <div class="card">
-          <h2>Wi-Fi Setup</h2>
-          <p>Save client Wi-Fi settings for this device. On single-radio devices, the AP will drop after reboot and the device will join the configured network.</p>
+          <h2>Setup</h2>
+          <p>Save first-run configuration. On single-radio devices, prefer reboot-after-save so the setup AP can drop cleanly and the device can join client Wi-Fi.</p>
           <form id="setup-form">
-            <label>Wi-Fi SSID<input name="ssid" autocomplete="off" required></label>
-            <label>Wi-Fi password<input name="password" type="password" autocomplete="current-password" required></label>
+            <label>Wi-Fi SSID<input name="ssid" autocomplete="off"></label>
+            <label>Wi-Fi password<input name="password" type="password" autocomplete="current-password"></label>
             <label>Hostname<input name="hostname" autocomplete="off" value="tortoisebot"></label>
-            <button type="submit">Save and reboot</button>
+            <label>SSH public key<textarea name="ssh_key" placeholder="ssh-ed25519 AAAA..."></textarea></label>
+            <label>SSH password<input name="ssh_password" type="password" autocomplete="new-password"></label>
+            <label>Atlas URL<input name="atlas_url" autocomplete="off" placeholder="https://atlas.yari.io/api/v1"></label>
+            <label>Atlas device token<input name="atlas_token" type="password" autocomplete="off"></label>
+            <label>Foxglove token<input name="foxglove_token" type="password" autocomplete="off"></label>
+            <button type="submit">Save setup</button>
           </form>
         </div>
         <div class="card">
@@ -209,44 +218,84 @@
           <div id="wifi-list"></div>
         </div>
         <div class="card"><h2>Network Status</h2><pre id="network-status">Loading...</pre></div>
+        <div class="card"><h2>Network Features</h2><pre id="network-features">Loading...</pre></div>
       </div>
     </section>
 
     <section id="services">
       <div class="card">
-        <h2>Services</h2>
+        <h2>YARI Services</h2>
         <div id="service-list"></div>
       </div>
       <div class="card">
-        <h2>Service Logs</h2>
+        <h2>Selected Service Logs</h2>
         <pre id="service-logs">Select a service log.</pre>
       </div>
     </section>
 
-    <section id="platform">
+    <section id="logs">
       <div class="grid">
-        <div class="card"><h2>Autopilot</h2><pre id="autopilot-status">Loading...</pre></div>
-        <div class="card"><h2>ROS 2</h2><pre id="ros-status">Loading...</pre></div>
-        <div class="card"><h2>Video</h2><pre id="video-status">Loading...</pre></div>
-        <div class="card"><h2>Data</h2><pre id="data-status">Loading...</pre></div>
+        <div class="card">
+          <h2>Log Sources</h2>
+          <div class="row">
+            <button class="secondary" data-log-source="onboarding" type="button">Onboarding</button>
+            <button class="secondary" data-log-source="system" type="button">System journal</button>
+            <button class="secondary" data-log-source="ros" type="button">ROS logs</button>
+            <button class="secondary" data-log-source="mavlink" type="button">MAVLink logs</button>
+            <button id="support-bundle" type="button">Download support bundle</button>
+          </div>
+          <pre id="logs-status">Loading...</pre>
+        </div>
+        <div class="card"><h2>Logs</h2><pre id="logs-output">Select a log source.</pre></div>
       </div>
     </section>
 
     <section id="maintenance">
       <div class="grid">
         <div class="card">
-          <h2>MAVLink Endpoints</h2>
-          <textarea id="mavlink-config"></textarea>
-          <div class="row"><button id="save-mavlink" type="button">Save endpoints</button></div>
-        </div>
-        <div class="card">
           <h2>Device Actions</h2>
           <div class="row">
             <button class="secondary" id="reboot" type="button">Reboot</button>
+            <button class="secondary" id="shutdown" type="button">Shutdown</button>
+            <button class="secondary" id="regenerate-id" type="button">Regenerate device ID</button>
             <button class="danger" id="factory-reset" type="button">Factory reset network</button>
           </div>
           <pre id="maintenance-output">Ready.</pre>
         </div>
+        <div class="card">
+          <h2>MAVLink Endpoints</h2>
+          <textarea id="mavlink-config"></textarea>
+          <div class="row"><button id="save-mavlink" type="button">Save endpoints</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="autopilot">
+      <div class="grid">
+        <div class="card"><h2>PX4 / ArduPilot Status</h2><pre id="autopilot-status">Loading...</pre></div>
+        <div class="card"><h2>Serial and MAVLink</h2><pre id="mavlink-status">Loading...</pre></div>
+      </div>
+    </section>
+
+    <section id="ros">
+      <div class="grid">
+        <div class="card"><h2>ROS 2 Status</h2><pre id="ros-status">Loading...</pre></div>
+        <div class="card"><h2>Topics</h2><pre id="ros-topics">Loading...</pre></div>
+        <div class="card"><h2>Recording Controls</h2><div class="row"><button class="secondary" id="ros-record-start" type="button">Start MCAP</button><button class="secondary" id="ros-record-stop" type="button">Stop MCAP</button></div><pre id="ros-recording">Reserved for yari-ros.service.</pre></div>
+      </div>
+    </section>
+
+    <section id="video">
+      <div class="grid">
+        <div class="card"><h2>Cameras</h2><pre id="video-status">Loading...</pre></div>
+        <div class="card"><h2>Stream Settings</h2><pre id="video-settings">Loading...</pre></div>
+      </div>
+    </section>
+
+    <section id="data">
+      <div class="grid">
+        <div class="card"><h2>MCAP and Flight Logs</h2><pre id="data-status">Loading...</pre></div>
+        <div class="card"><h2>Upload and Cleanup</h2><pre id="data-upload">Loading...</pre></div>
       </div>
     </section>
   </main>
@@ -258,9 +307,7 @@
     function setTheme(theme) {
       document.documentElement.dataset.theme = theme;
       localStorage.setItem('yari-theme', theme);
-      document.querySelectorAll('[data-theme-choice]').forEach((button) => {
-        button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme));
-      });
+      document.querySelectorAll('[data-theme-choice]').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme)));
     }
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -268,10 +315,9 @@
       if (!response.ok) throw new Error(data.error || response.statusText);
       return data;
     }
-    async function post(path, body = {}) {
-      return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    }
+    async function post(path, body = {}) { return api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
     function setPre(selector, data) { $(selector).textContent = typeof data === 'string' ? data : pretty(data); }
+    function setValue(selector, data) { $(selector).value = typeof data === 'string' ? data : pretty(data); }
     function statusClass(value) {
       if (['active', 'enabled', true].includes(value)) return 'ok';
       if (['inactive', 'disabled', 'unknown'].includes(value)) return 'warn';
@@ -279,15 +325,20 @@
     }
     async function refreshDevice() {
       const data = await api('/api/device/status');
+      const setup = await api('/api/setup/status');
       $('#summary').innerHTML = `
         <span class="pill">${escapeHtml(data.hostname || 'device')}</span>
         <span class="pill ${data.ip_addresses?.length ? 'ok' : 'warn'}">${escapeHtml((data.ip_addresses || []).join(' ') || 'no IP')}</span>
         <span class="pill">${escapeHtml(data.onboarding?.mode || 'unknown')}</span>`;
-      setPre('#setup-state', data.onboarding || data);
-      setPre('#device-status', { hostname: data.hostname, device_id: data.device_id, kernel: data.kernel, architecture: data.architecture, cpu_count: data.cpu_count, memory: data.memory, temperature_c: data.temperature_c, ip_addresses: data.ip_addresses });
+      setPre('#setup-state', { onboarding: data.onboarding, setup });
+      setPre('#device-status', { hostname: data.hostname, device_id: data.device_id, os_release: data.os_release, kernel: data.kernel, architecture: data.architecture, cpu_count: data.cpu_count, uptime: data.uptime, load_average: data.load_average, memory: data.memory, temperature_c: data.temperature_c, ip_addresses: data.ip_addresses });
       setPre('#storage-status', data.storage);
     }
-    async function refreshNetwork() { setPre('#network-status', await api('/api/network/status')); }
+    async function refreshNetwork() {
+      const data = await api('/api/network/status');
+      setPre('#network-status', data);
+      setPre('#network-features', data.config || {});
+    }
     async function refreshWifiScan() {
       const data = await api('/api/network/wifi/scan');
       const rows = data.networks.map((n) => `<tr><td>${escapeHtml(n.ssid)}</td><td>${escapeHtml(n.signal)}</td><td>${escapeHtml(n.security || 'open')}</td><td>${escapeHtml(n.channel)}</td></tr>`).join('');
@@ -295,26 +346,46 @@
     }
     async function refreshServices() {
       const data = await api('/api/services');
-      $('#service-list').innerHTML = `<table><thead><tr><th>Service</th><th>Active</th><th>Enabled</th><th></th></tr></thead><tbody>${data.services.map((svc) => `
+      $('#service-list').innerHTML = `<table><thead><tr><th>Service</th><th>Active</th><th>Enabled</th><th>Actions</th></tr></thead><tbody>${data.services.map((svc) => `
         <tr>
           <td>${escapeHtml(svc.name)}<br><small>${escapeHtml(svc.unit)}</small></td>
           <td class="${statusClass(svc.active)}">${escapeHtml(svc.active)}</td>
           <td class="${statusClass(svc.enabled)}">${escapeHtml(svc.enabled)}</td>
-          <td><button class="secondary" data-log="${escapeHtml(svc.name)}" type="button">Logs</button></td>
+          <td class="row">
+            <button class="secondary" data-service-action="start" data-service="${escapeHtml(svc.name)}" type="button">Start</button>
+            <button class="secondary" data-service-action="stop" data-service="${escapeHtml(svc.name)}" type="button">Stop</button>
+            <button class="secondary" data-service-action="restart" data-service="${escapeHtml(svc.name)}" type="button">Restart</button>
+            <button class="secondary" data-service-action="enable" data-service="${escapeHtml(svc.name)}" type="button">Enable</button>
+            <button class="secondary" data-service-action="disable" data-service="${escapeHtml(svc.name)}" type="button">Disable</button>
+            <button class="secondary" data-log="${escapeHtml(svc.name)}" type="button">Logs</button>
+          </td>
         </tr>`).join('')}</tbody></table>`;
-      document.querySelectorAll('[data-log]').forEach((button) => button.addEventListener('click', async () => {
-        setPre('#service-logs', await api(`/api/services/${encodeURIComponent(button.dataset.log)}/logs?lines=120`));
-      }));
+      document.querySelectorAll('[data-log]').forEach((button) => button.addEventListener('click', async () => setPre('#service-logs', await api(`/api/services/${encodeURIComponent(button.dataset.log)}/logs?lines=160`))));
+      document.querySelectorAll('[data-service-action]').forEach((button) => button.addEventListener('click', async () => { setPre('#service-logs', await post(`/api/services/${encodeURIComponent(button.dataset.service)}/${button.dataset.serviceAction}`)); await refreshServices(); }));
     }
-    async function refreshPlatform() {
-      setPre('#autopilot-status', await api('/api/autopilot/status'));
+    async function refreshLogs() { setPre('#logs-status', await api('/api/logs')); }
+    async function refreshAutopilot() {
+      const data = await api('/api/autopilot/status');
+      setPre('#autopilot-status', data);
+      setPre('#mavlink-status', data.endpoints || await api('/api/mavlink/endpoints'));
+      setValue('#mavlink-config', await api('/api/mavlink/endpoints'));
+    }
+    async function refreshRos() {
       setPre('#ros-status', await api('/api/ros/status'));
-      setPre('#video-status', await api('/api/video/status'));
-      setPre('#data-status', await api('/api/data/status'));
-      setPre('#mavlink-config', await api('/api/mavlink/endpoints'));
+      setPre('#ros-topics', await api('/api/ros/topics'));
+    }
+    async function refreshVideo() {
+      const data = await api('/api/video/status');
+      setPre('#video-status', data);
+      setPre('#video-settings', { profiles: data.profiles, settings: data.settings, preview: data.preview });
+    }
+    async function refreshData() {
+      const data = await api('/api/data/status');
+      setPre('#data-status', { mcap_dir: data.mcap_dir, mcap_logs: data.mcap_logs, flight_logs: data.flight_logs, service: data.service });
+      setPre('#data-upload', { upload_queue: data.upload_queue, storage_cleanup: data.storage_cleanup });
     }
     async function refreshAll() {
-      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshPlatform()]);
+      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshAutopilot(), refreshRos(), refreshVideo(), refreshData()]);
     }
     document.querySelectorAll('[data-theme-choice]').forEach((button) => button.addEventListener('click', () => setTheme(button.dataset.themeChoice)));
     document.querySelectorAll('nav button').forEach((button) => button.addEventListener('click', () => {
@@ -328,16 +399,22 @@
     $('#enable-ap').addEventListener('click', async () => { setPre('#network-status', await post('/api/network/ap/enable')); });
     $('#setup-form').addEventListener('submit', async (event) => {
       event.preventDefault();
-      setPre('#setup-state', 'Saving network settings...');
+      setPre('#setup-state', 'Saving setup settings...');
       const body = Object.fromEntries(new FormData(event.currentTarget).entries());
-      setPre('#setup-state', await post('/api/network/wifi/save', body));
+      setPre('#setup-state', await post('/api/setup/config', body));
     });
+    document.querySelectorAll('[data-log-source]').forEach((button) => button.addEventListener('click', async () => setPre('#logs-output', await api(`/api/logs/${button.dataset.logSource}?lines=220`))));
+    $('#support-bundle').addEventListener('click', () => { window.location.href = '/api/logs/support-bundle'; });
     $('#reboot').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/reboot')); });
+    $('#shutdown').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/shutdown')); });
+    $('#regenerate-id').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/device/regenerate-id')); await refreshDevice(); });
     $('#factory-reset').addEventListener('click', async () => { setPre('#maintenance-output', await post('/api/network/factory-reset', { reboot: false })); });
     $('#save-mavlink').addEventListener('click', async () => {
       try { setPre('#maintenance-output', await post('/api/mavlink/endpoints', JSON.parse($('#mavlink-config').value))); }
       catch (error) { setPre('#maintenance-output', `Save failed: ${error}`); }
     });
+    $('#ros-record-start').addEventListener('click', async () => { setPre('#ros-recording', await post('/api/ros/recording/start')); });
+    $('#ros-record-stop').addEventListener('click', async () => { setPre('#ros-recording', await post('/api/ros/recording/stop')); });
     setTheme(document.documentElement.dataset.theme || 'dark');
     refreshAll();
   </script>

@@ -1,0 +1,13 @@
+[Unit]
+Description=YARI OS Camera discovery and stream management
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yari-service-placeholder yari-video
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import uuid
@@ -17,6 +18,8 @@ from urllib.parse import parse_qs, urlparse
 STATE_DIR = Path(os.environ.get("YARI_ONBOARDING_STATE_DIR", "/var/lib/yari/onboarding"))
 STATE_FILE = STATE_DIR / "state.json"
 COMPLETE_FILE = STATE_DIR / "complete"
+DEVICE_ID_FILE = STATE_DIR / "device-id"
+SUPPORT_BUNDLE_DIR = STATE_DIR / "support-bundles"
 WEB_DIR = Path(os.environ.get("YARI_ONBOARDING_WEB_DIR", "/opt/yari/onboarding/web"))
 DEVICE_CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 NETPLAN_DIR = Path(os.environ.get("YARI_ONBOARDING_NETPLAN_DIR", "/etc/netplan"))
@@ -33,6 +36,9 @@ CONNECTIVITY_TIMEOUT = int(os.environ.get("YARI_ONBOARDING_CONNECTIVITY_TIMEOUT"
 HTTP_PORT = int(os.environ.get("YARI_ONBOARDING_HTTP_PORT", "80"))
 REBOOT_AFTER_SAVE = os.environ.get("YARI_ONBOARDING_REBOOT_AFTER_SAVE", "1") not in {"0", "false", "False"}
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
+PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
+PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
+ONBOARDING_USER = os.environ.get("YARI_ONBOARDING_USER", "tortoisebot")
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 SERVICE_ALLOWLIST = {
     "yari-onboarding": "yari-onboarding.service",
@@ -61,6 +67,12 @@ def has_command(name):
 
 
 def device_id():
+    try:
+        value = DEVICE_ID_FILE.read_text().strip()
+        if value:
+            return value
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
     for candidate in (Path("/etc/machine-id"), Path("/var/lib/dbus/machine-id")):
         try:
             value = candidate.read_text().strip()
@@ -69,6 +81,16 @@ def device_id():
         except FileNotFoundError:
             pass
     return secrets.token_hex(4)
+
+
+def regenerate_device_id():
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    new_id = secrets.token_hex(4)
+    DEVICE_ID_FILE.write_text(new_id + "\n")
+    os.chmod(DEVICE_ID_FILE, 0o600)
+    state = current_state({"mode": read_state().get("mode", "unknown"), "message": "device id regenerated"})
+    write_state(state)
+    return state
 
 
 def ap_ssid():
@@ -107,6 +129,78 @@ def read_text_file(path):
         return Path(path).read_text().strip()
     except (FileNotFoundError, PermissionError, OSError):
         return ""
+
+
+def write_json_secret(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    os.chmod(path, 0o600)
+
+
+def read_json_file(path, default=None):
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, PermissionError, OSError, json.JSONDecodeError):
+        return {} if default is None else default
+
+
+def redact_secret(value):
+    if not value:
+        return {"configured": False}
+    return {"configured": True, "length": len(str(value)), "preview": str(value)[:4] + "..."}
+
+
+def save_ssh_access(ssh_key="", ssh_password=""):
+    result = {"authorized_key": False, "password": False}
+    ssh_key = normalize_form_value(str(ssh_key or ""))
+    ssh_password = normalize_form_value(str(ssh_password or ""))
+    if ssh_key:
+        home = Path("/home") / ONBOARDING_USER
+        ssh_dir = home / ".ssh"
+        ssh_dir.mkdir(parents=True, exist_ok=True)
+        auth = ssh_dir / "authorized_keys"
+        existing = auth.read_text().splitlines() if auth.exists() else []
+        if ssh_key not in existing:
+            existing.append(ssh_key)
+            auth.write_text("\n".join(line for line in existing if line.strip()) + "\n")
+        os.chmod(ssh_dir, 0o700)
+        os.chmod(auth, 0o600)
+        try:
+            import pwd
+            user = pwd.getpwnam(ONBOARDING_USER)
+            os.chown(ssh_dir, user.pw_uid, user.pw_gid)
+            os.chown(auth, user.pw_uid, user.pw_gid)
+        except Exception:
+            pass
+        result["authorized_key"] = True
+    if ssh_password:
+        if APPLY_NETWORK:
+            subprocess.run(["chpasswd"], input=f"{ONBOARDING_USER}:{ssh_password}\n", text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result["password"] = True
+    return result
+
+
+def save_pairing_tokens(atlas_token="", foxglove_token=""):
+    current = read_json_file(PORTAL_SECRETS_FILE, {})
+    atlas_token = normalize_form_value(str(atlas_token or ""))
+    foxglove_token = normalize_form_value(str(foxglove_token or ""))
+    if atlas_token:
+        current["atlas_token"] = atlas_token
+    if foxglove_token:
+        current["foxglove_token"] = foxglove_token
+    if current:
+        write_json_secret(PORTAL_SECRETS_FILE, current)
+    return {"atlas_token": redact_secret(current.get("atlas_token")), "foxglove_token": redact_secret(current.get("foxglove_token"))}
+
+
+def portal_config_status():
+    secrets_payload = read_json_file(PORTAL_SECRETS_FILE, {})
+    return {
+        "user": ONBOARDING_USER,
+        "ssh_authorized_keys": len((Path("/home") / ONBOARDING_USER / ".ssh" / "authorized_keys").read_text().splitlines()) if (Path("/home") / ONBOARDING_USER / ".ssh" / "authorized_keys").exists() else 0,
+        "atlas_token": redact_secret(secrets_payload.get("atlas_token")),
+        "foxglove_token": redact_secret(secrets_payload.get("foxglove_token")),
+    }
 
 
 def command_output(args, timeout=8):
@@ -345,6 +439,35 @@ def configure_wifi(ssid, password, hostname=""):
     write_state(current_state({"mode": "configured", "configured_ssid": ssid}))
 
 
+def save_setup_config(payload):
+    ssid = str(payload.get("ssid") or "")
+    password = str(payload.get("password") or "")
+    hostname = str(payload.get("hostname") or "")
+    configured_wifi = False
+    if ssid or password:
+        configure_wifi(ssid, password, hostname)
+        configured_wifi = True
+    elif hostname:
+        safe_hostname = re.sub(r"[^a-z0-9-]+", "-", hostname.strip().lower()).strip("-")
+        if safe_hostname:
+            HOSTNAME_FILE.parent.mkdir(parents=True, exist_ok=True)
+            HOSTNAME_FILE.write_text(safe_hostname + "\n")
+            if APPLY_NETWORK:
+                run(["hostnamectl", "set-hostname", safe_hostname], capture=True)
+    ssh = save_ssh_access(payload.get("ssh_key", ""), payload.get("ssh_password", ""))
+    tokens = save_pairing_tokens(payload.get("atlas_token", ""), payload.get("foxglove_token", ""))
+    config = read_json_file(PORTAL_CONFIG_FILE, {})
+    config.update({"hostname": hostname, "updated": int(time.time())})
+    if payload.get("atlas_url"):
+        config["atlas_url"] = normalize_form_value(str(payload.get("atlas_url")))
+    PORTAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PORTAL_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(PORTAL_CONFIG_FILE, 0o600)
+    state = current_state({"mode": "configured" if configured_wifi else read_state().get("mode", "client"), "portal_config": portal_config_status()})
+    write_state(state)
+    return {"ok": True, "wifi_configured": configured_wifi, "ssh": ssh, "tokens": tokens, "state": state}
+
+
 def reboot_soon():
     def delayed():
         time.sleep(2)
@@ -453,6 +576,7 @@ def network_status():
         "active_connections": nm_active_connections(),
         "devices": devices,
         "interfaces": interfaces,
+        "config": network_config_placeholders(),
         "onboarding": read_state(),
     }
 
@@ -533,7 +657,16 @@ def autopilot_status():
         "serial_devices": serial_devices,
         "mavlink_router": service_status("yari-mavlink-router"),
         "manager": service_status("yari-autopilot-manager"),
-        "message": "MAVLink heartbeat parsing is planned for the autopilot manager layer.",
+        "endpoints": read_mavlink_endpoints(),
+        "flight_stack": "unknown",
+        "heartbeat": None,
+        "version": None,
+        "mode": None,
+        "battery": None,
+        "gps": None,
+        "armed": None,
+        "firmware_upload": {"supported": False, "message": "Firmware upload UI placeholder; flashing must remain hardware-profile aware."},
+        "message": "PX4/ArduPilot heartbeat parsing belongs in yari-autopilot-manager.service.",
     }
 
 
@@ -574,6 +707,9 @@ def ros_status():
         "installed": ros2["ok"],
         "ros_distro": os.environ.get("ROS_DISTRO") or "humble",
         "nodes": [line for line in nodes["stdout"].splitlines() if line],
+        "topics_endpoint": "/api/ros/topics",
+        "launch_profiles": ["tortoisebot-hardware", "drone-companion", "rover-companion"],
+        "recording": {"supported": False, "message": "Recording controls are reserved for yari-ros.service."},
         "error": nodes["stderr"],
         "service": service_status("yari-ros"),
     }
@@ -594,7 +730,10 @@ def video_status():
     return {
         "devices": glob_paths(["/dev/video*", "/dev/media*"]),
         "service": service_status("yari-video"),
-        "message": "Camera pipelines can publish ROS image topics, Foxglove streams, or Atlas WebRTC feeds.",
+        "profiles": ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"],
+        "settings": {"fps": None, "bandwidth": None, "encoding": None},
+        "preview": {"supported": False, "message": "Preview stream is provided by yari-video.service."},
+        "message": "Camera pipelines can publish ROS image topics, Foxglove streams, RTSP, or Atlas WebRTC feeds.",
     }
 
 
@@ -604,7 +743,104 @@ def data_status():
         for path in sorted(MCAP_DIR.glob("**/*.mcap"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
             stat = path.stat()
             bags.append({"path": str(path), "bytes": stat.st_size, "modified": int(stat.st_mtime)})
-    return {"mcap_dir": str(MCAP_DIR), "bags": bags, "service": service_status("yari-log-manager")}
+    flight_logs = glob_paths(["/var/log/*/*.ulg", "/var/log/*.ulg", "/home/*/**/*.ulg", "/home/*/**/*.BIN", "/home/*/**/*.bin"])[:50]
+    return {
+        "mcap_dir": str(MCAP_DIR),
+        "mcap_logs": bags,
+        "flight_logs": flight_logs,
+        "upload_queue": {"supported": False, "message": "Atlas upload queue belongs in yari-agent.service/yari-log-manager.service."},
+        "storage_cleanup": {"supported": False, "message": "Storage cleanup controls are planned for the data manager layer."},
+        "service": service_status("yari-log-manager"),
+    }
+
+
+def dns_status():
+    resolv = read_text_file("/etc/resolv.conf")
+    servers = []
+    for line in resolv.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "nameserver":
+            servers.append(parts[1])
+    return servers
+
+
+def network_config_placeholders():
+    return {
+        "ap_mode": {"ssid": ap_ssid(), "address": AP_ADDR, "security": "wpa-psk" if AP_PASSWORD else "open"},
+        "client_wifi": {"profile": "yari-wifi", "configured_ssid": read_configured_ssid()},
+        "ethernet": {"managed_by": "NetworkManager", "dhcp": True},
+        "static_ip": {"supported": False, "message": "Static IP UI/API is planned for the network adapter layer."},
+        "dns": {"servers": dns_status()},
+        "lte": {"supported": False, "message": "LTE modem support placeholder."},
+    }
+
+
+def log_sources():
+    return {
+        "onboarding": {"kind": "journal", "service": "yari-onboarding"},
+        "system": {"kind": "journal"},
+        "ros": {"kind": "paths", "paths": glob_paths(["/home/*/.ros/log/latest/*", "/home/*/.ros/log/*/*.log"])[:50]},
+        "mavlink": {"kind": "journal", "service": "yari-mavlink-router"},
+    }
+
+
+def logs_status():
+    return {"sources": log_sources(), "support_bundle_endpoint": "/api/logs/support-bundle"}
+
+
+def read_log_source(source, lines=160):
+    lines = max(1, min(int(lines), 1000))
+    if source == "system":
+        result = command_output(["journalctl", "-n", str(lines), "--no-pager"], timeout=12)
+        return {"ok": result["ok"], "source": source, "logs": result["stdout"], "error": result["stderr"]}
+    if source == "onboarding":
+        return service_logs("yari-onboarding", lines)
+    if source == "mavlink":
+        return service_logs("yari-mavlink-router", lines)
+    if source == "ros":
+        paths = glob_paths(["/home/*/.ros/log/latest/*", "/home/*/.ros/log/*/*.log"])[:20]
+        chunks = []
+        for item in paths[:8]:
+            result = command_output(["tail", "-n", str(max(20, lines // 4)), item], timeout=4)
+            if result["stdout"]:
+                chunks.append(f"==> {item} <==\n{result['stdout']}")
+        return {"ok": True, "source": source, "logs": "\n\n".join(chunks), "paths": paths}
+    raise ValueError(f"Unsupported log source '{source}'")
+
+
+def support_bundle():
+    SUPPORT_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
+    bundle = SUPPORT_BUNDLE_DIR / f"yari-support-{device_id()}-{int(time.time())}.tar.gz"
+    payloads = {
+        "device-status.json": device_status(),
+        "network-status.json": network_status(),
+        "services.json": services_status(),
+        "autopilot-status.json": autopilot_status(),
+        "ros-status.json": ros_status(),
+        "video-status.json": video_status(),
+        "data-status.json": data_status(),
+        "logs-status.json": logs_status(),
+    }
+    with tarfile.open(bundle, "w:gz") as tar:
+        for name, payload in payloads.items():
+            tmp = SUPPORT_BUNDLE_DIR / name
+            tmp.write_text(json.dumps(payload, indent=2) + "\n")
+            tar.add(tmp, arcname=name)
+            tmp.unlink(missing_ok=True)
+        for source in ("onboarding", "system", "ros", "mavlink"):
+            tmp = SUPPORT_BUNDLE_DIR / f"{source}.log"
+            tmp.write_text(read_log_source(source, 240).get("logs", "") + "\n")
+            tar.add(tmp, arcname=f"logs/{source}.log")
+            tmp.unlink(missing_ok=True)
+    os.chmod(bundle, 0o600)
+    return bundle
+
+
+def shutdown_soon():
+    def delayed():
+        time.sleep(2)
+        run(["systemctl", "poweroff"], capture=False)
+    threading.Thread(target=delayed, daemon=True).start()
 
 
 def factory_reset(reboot=False):
@@ -650,8 +886,29 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/network/wifi/scan":
                 self.send_json(200, wifi_scan())
                 return
+            if path == "/api/setup/status":
+                self.send_json(200, portal_config_status())
+                return
             if path == "/api/services":
                 self.send_json(200, services_status())
+                return
+            if path == "/api/logs":
+                self.send_json(200, logs_status())
+                return
+            if path == "/api/logs/support-bundle":
+                bundle = support_bundle()
+                body = bundle.read_bytes()
+                self.send_response(200)
+                self.send_header("content-type", "application/gzip")
+                self.send_header("content-disposition", f"attachment; filename={bundle.name}")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            logs_match = re.match(r"^/api/logs/([^/]+)$", path)
+            if logs_match:
+                lines = query.get("lines", ["160"])[0]
+                self.send_json(200, read_log_source(logs_match.group(1), lines))
                 return
             service_logs_match = re.match(r"^/api/services/([^/]+)/logs$", path)
             if service_logs_match:
@@ -696,9 +953,23 @@ class Handler(SimpleHTTPRequestHandler):
                 if REBOOT_AFTER_SAVE:
                     reboot_soon()
                 return
+            if path == "/api/setup/config":
+                result = save_setup_config(payload)
+                result["message"] = "Setup saved. Device will reboot." if result.get("wifi_configured") and REBOOT_AFTER_SAVE else "Setup saved."
+                self.send_json(200, result)
+                if result.get("wifi_configured") and REBOOT_AFTER_SAVE:
+                    reboot_soon()
+                return
             if path == "/api/reboot":
                 self.send_json(200, {"ok": True, "message": "Rebooting."})
                 reboot_soon()
+                return
+            if path == "/api/shutdown":
+                self.send_json(200, {"ok": True, "message": "Shutting down."})
+                shutdown_soon()
+                return
+            if path == "/api/device/regenerate-id":
+                self.send_json(200, {"ok": True, "state": regenerate_device_id()})
                 return
             if path == "/api/network/ap/enable":
                 ensure_ap()

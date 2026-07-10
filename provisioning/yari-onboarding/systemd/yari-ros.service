@@ -1,0 +1,13 @@
+[Unit]
+Description=YARI OS ROS 2 workspace, topic, launch, and bag controls
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/yari-service-placeholder yari-ros
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

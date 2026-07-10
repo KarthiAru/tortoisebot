@@ -29,11 +29,20 @@ NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Je
 
 ```text
 /usr/local/sbin/yari-onboarding
+/usr/local/sbin/yari-service-placeholder
 /etc/systemd/system/yari-onboarding.service
+/etc/systemd/system/yari-agent.service
+/etc/systemd/system/yari-mavlink-router.service
+/etc/systemd/system/yari-autopilot-manager.service
+/etc/systemd/system/yari-log-manager.service
+/etc/systemd/system/yari-video.service
+/etc/systemd/system/yari-ros.service
 /opt/yari/onboarding/web/index.html
 /var/lib/yari/onboarding/state.json
 /etc/yari/onboarding.env
 /etc/yari/mavlink-endpoints.json
+/etc/yari/device-portal.json
+/etc/yari/device-portal-secrets.json
 ```
 
 ## Branding and Themes
@@ -177,7 +186,10 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | Endpoint | Purpose |
 |---|---|
 | `GET /api/device/status` | Device identity, OS, memory, storage, temperature, IPs, onboarding state. |
-| `GET /api/network/status` | NetworkManager state, interfaces, active connections. |
+| `POST /api/device/regenerate-id` | Generate a new local YARI device ID override. |
+| `GET /api/setup/status` | SSH key count and redacted Atlas/Foxglove token status. |
+| `POST /api/setup/config` | Save Wi-Fi, hostname, SSH key/password, Atlas token, and Foxglove token. |
+| `GET /api/network/status` | NetworkManager state, interfaces, active connections, AP/client config, DNS, Ethernet, static-IP placeholder, LTE placeholder. |
 | `GET /api/network/wifi/scan` | Wi-Fi scan results. |
 | `POST /api/network/wifi/save` | Save SSID/password/hostname and optionally reboot. |
 | `POST /api/network/ap/enable` | Start setup AP mode. |
@@ -185,13 +197,20 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/services` | Status for known YARI services. |
 | `POST /api/services/<name>/start` | Start service. Also supports `stop`, `restart`, `enable`, `disable`. |
 | `GET /api/services/<name>/logs` | Tail journal logs for a known service. |
-| `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold. |
+| `GET /api/logs` | Log source registry and support bundle endpoint. |
+| `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |
+| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with status snapshots and logs. |
+| `POST /api/reboot` | Reboot the device. |
+| `POST /api/shutdown` | Power off the device. |
+| `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |
 | `GET /api/mavlink/endpoints` | Read MAVLink routing endpoint config. |
 | `POST /api/mavlink/endpoints` | Save serial/UDP/TCP MAVLink endpoints. |
-| `GET /api/ros/status` | ROS 2 installation and node status. |
+| `GET /api/ros/status` | ROS 2 installation, node status, launch profile placeholders, recording-control placeholder. |
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
-| `GET /api/video/status` | Camera/media device and video service status. |
-| `GET /api/data/status` | Recent MCAP files and log-manager status. |
+| `POST /api/ros/recording/start` | Placeholder endpoint reserved for `yari-ros.service`. |
+| `POST /api/ros/recording/stop` | Placeholder endpoint reserved for `yari-ros.service`. |
+| `GET /api/video/status` | Camera/media device status, stream profiles, preview/settings placeholders. |
+| `GET /api/data/status` | MCAP files, PX4/ArduPilot flight logs, upload queue placeholder, storage cleanup placeholder. |
 
 ## Allowed Services
 

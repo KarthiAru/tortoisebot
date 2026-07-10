@@ -133,6 +133,40 @@ Next hardening step:
 3. Add per-device AP passwords or a physical-access setup token.
 4. Add factory-reset/maintenance-mode controls.
 
+
+## Phase 1/2 Implementation Status
+
+This repo now contains the first implementation slice for Phase 1 and Phase 2, but the manager services are intentionally still scaffolding until hardware-specific MAVLink, video, ROS launch, and upload workers are implemented.
+
+Implemented Phase 1 pieces:
+
+- Persistent local portal served by `yari-onboarding.service` after normal Wi-Fi join and during setup AP mode.
+- NetworkManager-first Wi-Fi save path writing `/etc/NetworkManager/system-connections/yari-wifi.nmconnection`.
+- Reboot-after-save behavior for single-radio devices.
+- Setup fields for Wi-Fi, hostname, SSH key/password, Atlas token, and Foxglove token.
+- Device status with OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, and onboarding state.
+- Network status with active connections, interfaces, AP/client state, DNS, static-IP placeholder, Ethernet, and LTE placeholder.
+- Allowlisted service start/stop/restart/enable/disable/logs for YARI-managed services only.
+- Logs page with onboarding, system journal, ROS log, MAVLink log views, and downloadable support bundle endpoint.
+- Maintenance controls for reboot, shutdown, factory-reset network, and regenerate device ID.
+
+Implemented Phase 2 foundation:
+
+- Systemd unit templates for `yari-mavlink-router`, `yari-autopilot-manager`, `yari-log-manager`, `yari-video`, `yari-ros`, and `yari-agent`.
+- Autopilot portal page with serial-device discovery, MAVLink endpoint config, PX4/ArduPilot status placeholders, and firmware-upload placeholder.
+- ROS 2 portal page with ROS presence, node list, topic list, launch profile placeholders, and bag/MCAP recording placeholder endpoints.
+- Video portal page with camera/media device discovery and stream profile placeholders.
+- Data portal page with MCAP log discovery, flight-log discovery, upload queue placeholder, and cleanup placeholder.
+
+Remaining Phase 2 implementation work:
+
+- Replace placeholder systemd services with real service binaries/scripts.
+- Implement MAVLink heartbeat parsing, PX4/ArduPilot detection, mode, arming state, GPS, battery, EKF, failsafe, and firmware metadata.
+- Implement MAVLink router config generation and live reload.
+- Implement ROS launch profile management and MCAP start/stop controls.
+- Implement camera preview/stream controls for RTSP, WebRTC, and Foxglove-friendly compressed topics.
+- Implement Atlas upload queue, log retention, storage cleanup, and retry/failure reporting.
+
 ## Recovery Commands
 
 When connected by monitor/keyboard, verify who owns networking:

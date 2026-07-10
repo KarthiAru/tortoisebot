@@ -491,8 +491,10 @@ fi
 if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "true" || "${YARI_ONBOARDING_ENABLED}" == "True" ]]; then
   install -d "${ROOT_MOUNT}/usr/local/sbin" "${ROOT_MOUNT}/opt/yari/onboarding/web" "${ROOT_MOUNT}/etc/systemd/system" "${ROOT_MOUNT}/etc/yari" "${ROOT_MOUNT}/var/lib/yari/onboarding"
   install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-onboarding" "${ROOT_MOUNT}/usr/local/sbin/yari-onboarding"
-  install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/yari-onboarding.service" "${ROOT_MOUNT}/etc/systemd/system/yari-onboarding.service"
+  install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-service-placeholder" "${ROOT_MOUNT}/usr/local/sbin/yari-service-placeholder"
+  install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/"*.service "${ROOT_MOUNT}/etc/systemd/system/"
   cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  find "${ROOT_MOUNT}/opt/yari/onboarding/web" -name '*:Zone.Identifier' -delete || true
   cat > "${ROOT_MOUNT}/etc/yari/onboarding.env" <<ONBOARDING_ENV
 YARI_ONBOARDING_WIFI_IFACE=wlan0
 YARI_ONBOARDING_AP_ADDR=192.168.4.1
