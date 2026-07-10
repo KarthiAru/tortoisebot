@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import socket
 import subprocess
 import sys
@@ -41,6 +42,10 @@ PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari
 PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
 ONBOARDING_USER = os.environ.get("YARI_ONBOARDING_USER", "tortoisebot")
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
+ROS_RECORDING_PID_FILE = STATE_DIR / "rosbag-record.pid"
+ROS_RECORDING_LOG_FILE = STATE_DIR / "rosbag-record.log"
+ROS_RECORDING_CONFIG_FILE = Path(os.environ.get("YARI_ROS_RECORDING_CONFIG_FILE", "/etc/yari/ros-recording.json"))
+VIDEO_CONFIG_FILE = Path(os.environ.get("YARI_VIDEO_CONFIG_FILE", "/etc/yari/video.json"))
 SERVICE_ALLOWLIST = {
     "yari-onboarding": "yari-onboarding.service",
     "yari-agent": "yari-agent.service",
@@ -724,7 +729,7 @@ def ros_status():
         "topics": manager_payload.get("topics", []),
         "topics_endpoint": "/api/ros/topics",
         "launch_profiles": ["tortoisebot-hardware", "drone-companion", "rover-companion"],
-        "recording": manager_payload.get("recording", read_json_file(DEVICE_CONFIG_DIR / "ros-recording.json", {"active": False})),
+        "recording": manager_payload.get("recording", ros_recording_status()),
         "error": nodes["stderr"],
         "service": service_status("yari-ros"),
         "manager_state": manager_payload,
@@ -742,13 +747,140 @@ def ros_topics():
     return {"ok": result["ok"], "topics": topics, "error": result["stderr"]}
 
 
+def process_running(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (ProcessLookupError, ValueError, TypeError):
+        return False
+    except PermissionError:
+        return True
+
+
+def ros_recording_status():
+    config = read_json_file(ROS_RECORDING_CONFIG_FILE, {"active": False})
+    pid = None
+    try:
+        pid = int(ROS_RECORDING_PID_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        pass
+    active = bool(pid and process_running(pid))
+    if config.get("active") and not active:
+        config["active"] = False
+        config["message"] = "recording process is not running"
+    config.update({"active": active, "pid": pid, "log_file": str(ROS_RECORDING_LOG_FILE)})
+    return config
+
+
+def start_ros_recording(payload):
+    status = ros_recording_status()
+    if status.get("active"):
+        return {"ok": True, "recording": status, "message": "MCAP recording is already running"}
+    ros2 = command_output(["bash", "-lc", "source /opt/ros/humble/setup.bash 2>/dev/null || true; command -v ros2"], timeout=5)
+    if not ros2["ok"]:
+        return {"ok": False, "error": "ros2 command not found"}
+    topics = payload.get("topics") or []
+    if isinstance(topics, str):
+        topics = [topic.strip() for topic in topics.split() if topic.strip()]
+    if not isinstance(topics, list):
+        raise ValueError("topics must be a list or whitespace-separated string")
+    name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(payload.get("name") or f"yari_ros_{time.strftime('%Y%m%d_%H%M%S')}"))
+    output_dir = MCAP_DIR / name
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    ROS_RECORDING_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    topic_args = "-a" if not topics else " ".join(sh_quote(str(topic)) for topic in topics)
+    cmd = f"source /opt/ros/humble/setup.bash && exec ros2 bag record --storage mcap -o {sh_quote(str(output_dir))} {topic_args}"
+    log_handle = ROS_RECORDING_LOG_FILE.open("ab")
+    proc = subprocess.Popen(["bash", "-lc", cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    ROS_RECORDING_PID_FILE.write_text(str(proc.pid) + "\n")
+    config = {"active": True, "pid": proc.pid, "output_dir": str(output_dir), "topics": topics or ["*"], "started": int(time.time())}
+    ROS_RECORDING_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROS_RECORDING_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(ROS_RECORDING_CONFIG_FILE, 0o600)
+    return {"ok": True, "recording": ros_recording_status()}
+
+
+def stop_ros_recording():
+    status = ros_recording_status()
+    pid = status.get("pid")
+    if pid and status.get("active"):
+        try:
+            os.killpg(int(pid), signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            os.kill(int(pid), signal.SIGINT)
+        time.sleep(1)
+    ROS_RECORDING_PID_FILE.unlink(missing_ok=True)
+    status = ros_recording_status()
+    status["active"] = False
+    status["stopped"] = int(time.time())
+    ROS_RECORDING_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROS_RECORDING_CONFIG_FILE.write_text(json.dumps(status, indent=2) + "\n")
+    return {"ok": True, "recording": status}
+
+
+def sh_quote(value):
+    return "'" + str(value).replace("'", "'\''") + "'"
+
+
+def save_video_settings(payload):
+    fps = int(payload.get("fps", 15))
+    if fps < 1 or fps > 60:
+        raise ValueError("fps must be between 1 and 60")
+    encoding = str(payload.get("encoding") or "mjpeg").lower()
+    if encoding not in {"mjpeg", "h264", "h265", "bgr8", "mono8"}:
+        raise ValueError("encoding must be one of mjpeg, h264, h265, bgr8, mono8")
+    bandwidth = payload.get("bandwidth_kbps")
+    bandwidth_kbps = None if bandwidth in {None, ""} else int(bandwidth)
+    if bandwidth_kbps is not None and bandwidth_kbps < 64:
+        raise ValueError("bandwidth_kbps must be at least 64")
+    settings = {"fps": fps, "encoding": encoding, "bandwidth_kbps": bandwidth_kbps, "updated": int(time.time())}
+    VIDEO_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    VIDEO_CONFIG_FILE.write_text(json.dumps(settings, indent=2) + "\n")
+    os.chmod(VIDEO_CONFIG_FILE, 0o600)
+    return settings
+
+
+def log_cleanup_candidates():
+    candidates = []
+    for item in data_status().get("mcap_logs", []):
+        path = Path(item["path"])
+        if path.exists():
+            candidates.append({"path": str(path), "bytes": path.stat().st_size, "kind": "mcap"})
+    for value in data_status().get("flight_logs", []):
+        path = Path(value)
+        if path.exists() and path.is_file():
+            candidates.append({"path": str(path), "bytes": path.stat().st_size, "kind": "flight"})
+    return candidates
+
+
+def cleanup_data_logs(payload):
+    candidates = {item["path"]: item for item in log_cleanup_candidates()}
+    selected = payload.get("paths") or list(candidates)
+    if isinstance(selected, str):
+        selected = [selected]
+    unknown = [path for path in selected if path not in candidates]
+    if unknown:
+        raise ValueError(f"refusing to delete unknown log path(s): {', '.join(unknown[:3])}")
+    preview = [candidates[path] for path in selected]
+    if not payload.get("confirm"):
+        return {"ok": True, "dry_run": True, "candidates": preview, "bytes": sum(item["bytes"] for item in preview)}
+    deleted = []
+    for item in preview:
+        path = Path(item["path"])
+        path.unlink(missing_ok=True)
+        deleted.append(item)
+    return {"ok": True, "dry_run": False, "deleted": deleted, "bytes": sum(item["bytes"] for item in deleted)}
+
+
 def video_status():
     manager_payload = service_manager_status("video")
     return {
         "devices": manager_payload.get("devices", glob_paths(["/dev/video*", "/dev/media*"])),
         "service": service_status("yari-video"),
         "profiles": manager_payload.get("profiles", ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"]),
-        "settings": manager_payload.get("settings", read_json_file(DEVICE_CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None})),
+        "settings": manager_payload.get("settings", read_json_file(VIDEO_CONFIG_FILE, {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None})),
         "preview": {"supported": True, "message": "Preview is available through ROS/Foxglove/Atlas stream profiles when the video service is running."},
         "manager_state": manager_payload,
         "message": "Camera pipelines can publish ROS image topics, Foxglove streams, RTSP, or Atlas WebRTC feeds.",
@@ -1005,8 +1137,20 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/mavlink/endpoints":
                 self.send_json(200, {"ok": True, "config": write_mavlink_endpoints(payload)})
                 return
-            if path in {"/api/ros/recording/start", "/api/ros/recording/stop", "/api/ros/launch-profile"}:
-                self.send_json(202, {"ok": False, "supported": False, "message": "ROS launch and recording controls are reserved for the YARI ROS manager service."})
+            if path == "/api/ros/recording/start":
+                self.send_json(200, start_ros_recording(payload))
+                return
+            if path == "/api/ros/recording/stop":
+                self.send_json(200, stop_ros_recording())
+                return
+            if path == "/api/video/settings":
+                self.send_json(200, {"ok": True, "settings": save_video_settings(payload)})
+                return
+            if path == "/api/data/cleanup":
+                self.send_json(200, cleanup_data_logs(payload))
+                return
+            if path == "/api/ros/launch-profile":
+                self.send_json(202, {"ok": False, "supported": False, "message": "ROS launch profile switching requires a configured launch profile runner."})
                 return
         except Exception as exc:
             self.send_json(500, {"ok": False, "error": str(exc)})

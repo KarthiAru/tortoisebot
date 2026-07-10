@@ -31,6 +31,11 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
         self.module.PORTAL_SECRETS_FILE = root / "secrets.json"
         self.module.PORTAL_CONFIG_FILE = root / "portal.json"
+        self.module.VIDEO_CONFIG_FILE = root / "video.json"
+        self.module.ROS_RECORDING_CONFIG_FILE = root / "ros-recording.json"
+        self.module.ROS_RECORDING_PID_FILE = root / "ros-record.pid"
+        self.module.ROS_RECORDING_LOG_FILE = root / "ros-record.log"
+        self.module.MCAP_DIR = root / "mcap"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
@@ -129,6 +134,28 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(status["nodes"], ["/camera"])
         self.assertTrue(status["recording"]["active"])
         self.assertIn("/scan [sensor_msgs/msg/LaserScan]", status["topics"])
+
+
+    def test_save_video_settings_validates_and_persists(self):
+        settings = self.module.save_video_settings({"fps": "20", "encoding": "mono8", "bandwidth_kbps": "512"})
+        self.assertEqual(settings["fps"], 20)
+        self.assertEqual(settings["encoding"], "mono8")
+        self.assertTrue(self.module.VIDEO_CONFIG_FILE.exists())
+        with self.assertRaises(ValueError):
+            self.module.save_video_settings({"fps": "0", "encoding": "mjpeg"})
+
+    def test_cleanup_data_logs_requires_known_candidates_and_confirm(self):
+        self.module.MCAP_DIR.mkdir(parents=True, exist_ok=True)
+        log = self.module.MCAP_DIR / "sample.mcap"
+        log.write_text("bag")
+        preview = self.module.cleanup_data_logs({"confirm": False})
+        self.assertTrue(preview["dry_run"])
+        self.assertTrue(log.exists())
+        with self.assertRaises(ValueError):
+            self.module.cleanup_data_logs({"paths": ["/tmp/not-a-yari-log"], "confirm": True})
+        result = self.module.cleanup_data_logs({"paths": [str(log)], "confirm": True})
+        self.assertFalse(result["dry_run"])
+        self.assertFalse(log.exists())
 
     def test_support_bundle_contains_status_files(self):
         bundle = self.module.support_bundle()

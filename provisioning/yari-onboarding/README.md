@@ -206,12 +206,14 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |
 | `GET /api/mavlink/endpoints` | Read MAVLink routing endpoint config. |
 | `POST /api/mavlink/endpoints` | Save serial/UDP/TCP MAVLink endpoints. |
-| `GET /api/ros/status` | ROS 2 installation, node status, launch profile placeholders, recording-control placeholder. |
+| `GET /api/ros/status` | ROS 2 installation, node/topic status, launch profiles, MCAP recording state. |
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
-| `POST /api/ros/recording/start` | Placeholder endpoint reserved for `yari-ros.service`. |
-| `POST /api/ros/recording/stop` | Placeholder endpoint reserved for `yari-ros.service`. |
-| `GET /api/video/status` | Camera/media device status, stream profiles, preview/settings placeholders. |
-| `GET /api/data/status` | MCAP files, PX4/ArduPilot flight logs, upload queue placeholder, storage cleanup placeholder. |
+| `POST /api/ros/recording/start` | Starts `ros2 bag record --storage mcap`; leave topics blank to record all topics. |
+| `POST /api/ros/recording/stop` | Sends SIGINT to the active rosbag process and updates recording state. |
+| `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, persisted stream settings. |
+| `POST /api/video/settings` | Saves FPS, encoding, and bandwidth settings for video service profiles. |
+| `GET /api/data/status` | MCAP files, PX4/ArduPilot flight logs, upload queue and storage cleanup status. |
+| `POST /api/data/cleanup` | Previews or deletes selected discovered MCAP/flight log files when `confirm` is true. |
 
 ## Allowed Services
 
