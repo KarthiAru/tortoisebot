@@ -226,6 +226,15 @@
         <div class="card"><h2>Network Status</h2><pre id="network-status">Loading...</pre></div>
         <div class="card"><h2>Static IP</h2><form id="static-ip-form"><label><input name="enabled" type="checkbox"> Enable static IPv4</label><label>Connection<input name="connection_name" value="yari-wifi"></label><label>Address/CIDR<input name="address_cidr" placeholder="192.168.0.50/24"></label><label>Gateway<input name="gateway" placeholder="192.168.0.1"></label><label>DNS servers<input name="dns" placeholder="1.1.1.1,8.8.8.8"></label><button type="submit">Save static IP</button></form><pre id="static-ip-status">Loading...</pre></div>
         <div class="card"><h2>Network Features</h2><pre id="network-features">Loading...</pre></div>
+        <div class="card">
+          <h2>Network Diagnostics</h2>
+          <div class="row">
+            <button id="run-network-diagnostics" type="button">Run diagnostics</button>
+            <button class="secondary" id="reconnect-wifi" type="button">Reconnect Wi-Fi</button>
+            <button class="danger" id="forget-wifi" type="button">Forget Wi-Fi</button>
+          </div>
+          <pre id="network-diagnostics">Loading...</pre>
+        </div>
       </div>
     </section>
 
@@ -345,8 +354,10 @@
     }
     async function refreshNetwork() {
       const data = await api('/api/network/status');
+      const diagnostics = await api('/api/network/diagnostics');
       setPre('#network-status', data);
       setPre('#network-features', data.config || {});
+      setPre('#network-diagnostics', diagnostics);
       const staticIp = data.config?.static_ip || {};
       $('#static-ip-form [name="enabled"]').checked = Boolean(staticIp.enabled);
       $('#static-ip-form [name="connection_name"]').value = staticIp.connection_name || 'yari-wifi';
@@ -435,6 +446,13 @@
     $('#refresh-all').addEventListener('click', refreshAll);
     $('#scan-wifi').addEventListener('click', () => refreshWifiScan('#wifi-list'));
     $('#setup-scan-wifi').addEventListener('click', () => refreshWifiScan('#setup-wifi-list'));
+    $('#run-network-diagnostics').addEventListener('click', async () => setPre('#network-diagnostics', await api('/api/network/diagnostics')));
+    $('#reconnect-wifi').addEventListener('click', async () => { setPre('#network-diagnostics', await post('/api/network/wifi/reconnect')); await refreshNetwork(); });
+    $('#forget-wifi').addEventListener('click', async () => {
+      if (!confirm('Forget saved Wi-Fi profile? The setup AP may be needed to reconnect.')) return;
+      setPre('#network-diagnostics', await post('/api/network/wifi/forget'));
+      await refreshNetwork();
+    });
     $('#enable-ap').addEventListener('click', async () => { setPre('#network-status', await post('/api/network/ap/enable')); });
     $('#static-ip-form').addEventListener('submit', async (event) => {
       event.preventDefault();

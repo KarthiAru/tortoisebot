@@ -716,6 +716,89 @@ def network_status():
     }
 
 
+def output_lines(result, limit=120):
+    combined = "\n".join(part for part in (result.get("stdout", ""), result.get("stderr", "")) if part)
+    lines = combined.splitlines()
+    if len(lines) > limit:
+        return lines[-limit:]
+    return lines
+
+
+def filtered_lines(text, patterns, limit=80):
+    regex = re.compile("|".join(patterns), re.IGNORECASE)
+    lines = [line for line in text.splitlines() if regex.search(line)]
+    if len(lines) > limit:
+        return lines[-limit:]
+    return lines
+
+
+def network_diagnostics():
+    iface = AP_IFACE
+    checks = {
+        "ipv4_global_address": command_output(["/usr/bin/env", "sh", "-lc", "ip -4 addr show scope global | grep -q inet"], timeout=5)["ok"],
+        "default_route": command_output(["/usr/bin/env", "sh", "-lc", "ip route | grep -q '^default'"], timeout=5)["ok"],
+        "dns_servers": bool(dns_status()),
+    }
+    route_probe = command_output(["ip", "route", "get", "1.1.1.1"], timeout=5)
+    nm_general = command_output(["nmcli", "-t", "-f", "STATE,CONNECTIVITY,WIFI-HW,WIFI,WWAN-HW,WWAN", "general"], timeout=6) if has_command("nmcli") else {"ok": False, "stdout": "", "stderr": "nmcli not installed", "returncode": 127}
+    nm_device = command_output(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"], timeout=6) if has_command("nmcli") else {"ok": False, "stdout": "", "stderr": "nmcli not installed", "returncode": 127}
+    nm_wifi = command_output(["nmcli", "-t", "-f", "802-11-wireless.ssid,802-11-wireless-security.key-mgmt", "connection", "show", "yari-wifi"], timeout=6) if has_command("nmcli") else {"ok": False, "stdout": "", "stderr": "nmcli not installed", "returncode": 127}
+    nm_ap = command_output(["nmcli", "-t", "-f", "802-11-wireless.ssid,802-11-wireless.mode,ipv4.method", "connection", "show", "yari-setup-ap"], timeout=6) if has_command("nmcli") else {"ok": False, "stdout": "", "stderr": "nmcli not installed", "returncode": 127}
+    journal = command_output(["journalctl", "-u", "NetworkManager", "-b", "-n", "240", "--no-pager"], timeout=12)
+    failure_patterns = [
+        re.escape(iface),
+        "yari-wifi",
+        "yari-setup-ap",
+        "failed",
+        "no-secrets",
+        "ssid-not-found",
+        "association took too long",
+        "IP configuration could not be reserved",
+        "supplicant",
+        "not connected",
+    ]
+    return {
+        "ok": all(checks.values()),
+        "checked_at": int(time.time()),
+        "wifi_iface": iface,
+        "checks": checks,
+        "connectivity": has_connectivity(),
+        "state": read_state(),
+        "route_probe": {"ok": route_probe["ok"], "lines": output_lines(route_probe, 20)},
+        "networkmanager": {
+            "installed": has_command("nmcli"),
+            "general": {"ok": nm_general["ok"], "lines": output_lines(nm_general, 20)},
+            "devices": {"ok": nm_device["ok"], "lines": output_lines(nm_device, 40)},
+            "yari_wifi_profile": {"ok": nm_wifi["ok"], "lines": output_lines(nm_wifi, 20)},
+            "setup_ap_profile": {"ok": nm_ap["ok"], "lines": output_lines(nm_ap, 20)},
+            "recent_clues": filtered_lines(journal.get("stdout", "") + "\n" + journal.get("stderr", ""), failure_patterns),
+        },
+        "dns": {"servers": dns_status(), "resolv_conf": read_text_file("/etc/resolv.conf")},
+        "active_connections": nm_active_connections(),
+    }
+
+
+def reconnect_wifi():
+    if not has_command("nmcli"):
+        return {"ok": False, "error": "NetworkManager/nmcli is not installed", "diagnostics": network_diagnostics()}
+    run(["nmcli", "connection", "down", "yari-setup-ap"], capture=True)
+    result = command_output(["nmcli", "connection", "up", "yari-wifi"], timeout=45)
+    if result["ok"]:
+        wait_for_connectivity(10)
+    return {"ok": result["ok"], "stdout": result["stdout"], "stderr": result["stderr"], "diagnostics": network_diagnostics()}
+
+
+def forget_wifi():
+    for path in (NM_CONNECTION_DIR / "yari-wifi.nmconnection", NETPLAN_DIR / "01-yari-wifi.yaml"):
+        path.unlink(missing_ok=True)
+    if has_command("nmcli"):
+        run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
+        run(["nmcli", "connection", "reload"], capture=True)
+    state = current_state({"mode": "wifi-forgotten", "complete": False, "message": "saved client Wi-Fi profile removed"})
+    write_state(state)
+    return {"ok": True, "state": state, "diagnostics": network_diagnostics()}
+
+
 def wifi_scan():
     if not has_command("nmcli"):
         return {"ok": False, "error": "NetworkManager/nmcli is not installed", "networks": []}
@@ -1485,6 +1568,7 @@ def support_bundle():
     payloads = {
         "device-status.json": device_status(),
         "network-status.json": network_status(),
+        "network-diagnostics.json": network_diagnostics(),
         "services.json": services_status(),
         "autopilot-status.json": autopilot_status(),
         "ros-status.json": ros_status(),
@@ -1561,6 +1645,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/network/status":
                 self.send_json(200, network_status())
+                return
+            if path == "/api/network/diagnostics":
+                self.send_json(200, network_diagnostics())
                 return
             if path == "/api/network/wifi/scan":
                 self.send_json(200, wifi_scan())
@@ -1659,6 +1746,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/network/static-ip":
                 self.send_json(200, save_static_ip_config(payload))
+                return
+            if path == "/api/network/wifi/reconnect":
+                self.send_json(200, reconnect_wifi())
+                return
+            if path == "/api/network/wifi/forget":
+                self.send_json(200, forget_wifi())
                 return
             if path == "/api/network/factory-reset":
                 self.send_json(200, {"ok": True, "state": factory_reset(bool(payload.get("reboot", False)))})

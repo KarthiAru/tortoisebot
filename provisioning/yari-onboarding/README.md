@@ -196,8 +196,11 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/setup/status` | SSH key count and redacted Atlas/Foxglove token status. |
 | `POST /api/setup/config` | Save Wi-Fi, hostname, SSH key/password, Atlas URL/upload URL, Atlas token, and Foxglove token. |
 | `GET /api/network/status` | NetworkManager state, interfaces, active connections, AP/client config, DNS, Ethernet, static IPv4 config, LTE placeholder. |
+| `GET /api/network/diagnostics` | Connectivity checks, route/DNS probe, NetworkManager profile summaries, and recent NetworkManager failure clues. |
 | `GET /api/network/wifi/scan` | Wi-Fi scan results. |
 | `POST /api/network/wifi/save` | Save SSID/password/hostname and optionally reboot. |
+| `POST /api/network/wifi/reconnect` | Drop setup AP if active and retry the saved `yari-wifi` client profile, returning diagnostics. |
+| `POST /api/network/wifi/forget` | Remove the saved `yari-wifi` client profile and return to incomplete onboarding state. |
 | `POST /api/network/ap/enable` | Start setup AP mode. |
 | `POST /api/network/static-ip` | Save validated static IPv4 settings and apply them to a NetworkManager connection when available. |
 | `POST /api/network/factory-reset` | Clear saved YARI network config and onboarding completion state. |
@@ -206,7 +209,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/services/<name>/logs` | Tail journal logs for a known service. |
 | `GET /api/logs` | Log source registry and support bundle endpoint. |
 | `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |
-| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with status snapshots and logs. |
+| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with device, network, network diagnostics, service, ROS/video/data status snapshots and logs. |
 | `POST /api/reboot` | Reboot the device. |
 | `POST /api/shutdown` | Power off the device. |
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |

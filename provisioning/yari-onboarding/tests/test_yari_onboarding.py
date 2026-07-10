@@ -2,6 +2,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,6 +52,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.APPLY_NETWORK = False
         self.commands = []
         self.module.run = self.fake_run
+        self.module.command_output = self.fake_command_output
         self.module.has_command = lambda name: name == "nmcli"
         self.module.os.chown = lambda path, uid, gid: None
 
@@ -61,6 +63,26 @@ class YariOnboardingTests(unittest.TestCase):
             stdout = ""
             stderr = ""
         return Result()
+
+    def fake_command_output(self, args, timeout=8):
+        self.commands.append(args)
+        command = " ".join(args)
+        stdout = ""
+        if args[:2] == ["lsblk", "-J"]:
+            stdout = '{"blockdevices": []}'
+        elif args[:3] == ["ip", "-j", "addr"]:
+            stdout = "[]"
+        elif args[:3] == ["ip", "route", "get"]:
+            stdout = "1.1.1.1 via 192.168.0.1 dev wlan0"
+        elif "nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status" in command:
+            stdout = "wlan0:wifi:connected:yari-wifi"
+        elif "nmcli -t -f NAME,UUID,TYPE,DEVICE connection show --active" in command:
+            stdout = "yari-wifi:uuid:wifi:wlan0"
+        elif "802-11-wireless.ssid" in command:
+            stdout = "802-11-wireless.ssid:Brindavan\n802-11-wireless-security.key-mgmt:wpa-psk"
+        elif "journalctl -u NetworkManager" in command:
+            stdout = "device (wlan0): Activation: successful"
+        return {"ok": True, "stdout": stdout, "stderr": "", "returncode": 0}
 
     def test_normalize_form_value_strips_accidental_wrapping_quotes(self):
         self.assertEqual(self.module.normalize_form_value('"Brindavan"'), "Brindavan")
@@ -285,10 +307,22 @@ class YariOnboardingTests(unittest.TestCase):
         cleared = self.module.clear_upload_queue({"keep_failed": True})
         self.assertEqual(cleared["queue"]["items"], [])
 
+    def test_network_diagnostics_reports_core_sections(self):
+        diagnostics = self.module.network_diagnostics()
+        self.assertIn("checks", diagnostics)
+        self.assertIn("networkmanager", diagnostics)
+        self.assertIn("recent_clues", diagnostics["networkmanager"])
+
     def test_support_bundle_contains_status_files(self):
         bundle = self.module.support_bundle()
         self.assertTrue(bundle.exists())
         self.assertEqual(bundle.suffixes[-2:], [".tar", ".gz"])
+        with tarfile.open(bundle, "r:gz") as archive:
+            names = set(archive.getnames())
+        self.assertIn("device-status.json", names)
+        self.assertIn("network-status.json", names)
+        self.assertIn("network-diagnostics.json", names)
+        self.assertIn("logs/onboarding.log", names)
 
 
 if __name__ == "__main__":
