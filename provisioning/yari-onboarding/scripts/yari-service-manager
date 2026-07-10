@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 STATE_DIR = Path(os.environ.get("YARI_SERVICE_STATE_DIR", "/var/lib/yari/services"))
+RUNTIME_DIR = Path(os.environ.get("YARI_SERVICE_RUNTIME_DIR", "/run/yari"))
 CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
@@ -58,16 +59,67 @@ def service_status(role):
     }
 
 
+def command_exists(name):
+    return command(["bash", "-lc", f"command -v {name}"], timeout=5)["ok"]
+
+
+def write_mavlink_router_config(endpoints):
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    config_path = RUNTIME_DIR / "mavlink-router.conf"
+    serial = next((endpoint for endpoint in endpoints if endpoint.get("enabled") and endpoint.get("type") == "serial"), None)
+    lines = ["[General]", "ReportStats=false", "MavlinkDialect=auto", ""]
+    if serial:
+        lines.extend(["[UartEndpoint autopilot]", f"Device={serial.get('device', '/dev/ttyACM0')}", f"Baud={int(serial.get('baud', 57600))}", ""])
+    udp_count = 0
+    for endpoint in endpoints:
+        if not endpoint.get("enabled") or endpoint.get("type") != "udp":
+            continue
+        udp_count += 1
+        name = endpoint.get("name") or f"udp-{udp_count}"
+        host = endpoint.get("host") or "127.0.0.1"
+        port = int(endpoint.get("port", 14550))
+        mode = endpoint.get("mode") or "normal"
+        lines.extend([f"[UdpEndpoint {name}]", f"Address={host}", f"Port={port}", f"Mode={mode}", ""])
+    config_path.write_text("\n".join(lines))
+    os.chmod(config_path, 0o644)
+    return config_path
+
+
+def start_mavlink_router_process(config_path):
+    if not command_exists("mavlink-routerd"):
+        return {"running": False, "error": "mavlink-routerd is not installed"}
+    pid_file = RUNTIME_DIR / "mavlink-router.pid"
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 0)
+            return {"running": True, "pid": pid, "config": str(config_path)}
+        except (ValueError, ProcessLookupError):
+            pid_file.unlink(missing_ok=True)
+    log_file = RUNTIME_DIR / "mavlink-router.log"
+    log_handle = log_file.open("ab")
+    proc = subprocess.Popen(["mavlink-routerd", "-c", str(config_path)], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    pid_file.write_text(str(proc.pid) + "\n")
+    return {"running": True, "pid": proc.pid, "config": str(config_path), "log_file": str(log_file)}
+
+
 def mavlink_router_status():
     endpoints = read_json(MAVLINK_CONFIG_FILE, {"endpoints": []}).get("endpoints", [])
     enabled = [endpoint for endpoint in endpoints if endpoint.get("enabled")]
+    router = {"running": False, "message": "no enabled MAVLink endpoints"}
+    config_path = None
+    if enabled:
+        config_path = write_mavlink_router_config(endpoints)
+        router = start_mavlink_router_process(config_path)
     return {
         **service_status("mavlink-router"),
         "config_file": str(MAVLINK_CONFIG_FILE),
+        "router_config": str(config_path) if config_path else None,
         "endpoints": endpoints,
         "enabled_endpoints": enabled,
         "serial_devices": glob_paths(["/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*", "/dev/ttyAMA*"]),
-        "routing": "configured" if enabled else "disabled",
+        "routing": "running" if router.get("running") else ("configured" if enabled else "disabled"),
+        "router_process": router,
     }
 
 

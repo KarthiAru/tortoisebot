@@ -704,11 +704,24 @@ def write_mavlink_endpoints(payload):
     endpoints = payload.get("endpoints")
     if not isinstance(endpoints, list):
         raise ValueError("endpoints must be a list")
+    normalized = []
     for endpoint in endpoints:
         if not isinstance(endpoint, dict) or endpoint.get("type") not in {"serial", "udp", "tcp"}:
             raise ValueError("each endpoint needs type serial, udp, or tcp")
+        item = dict(endpoint)
+        item["enabled"] = bool(item.get("enabled", False))
+        if item["type"] == "serial":
+            if not item.get("device"):
+                raise ValueError("serial endpoints require device")
+            item["baud"] = int(item.get("baud", 57600))
+        if item["type"] in {"udp", "tcp"}:
+            item["host"] = str(item.get("host") or "127.0.0.1")
+            item["port"] = int(item.get("port", 14550))
+            if item["port"] < 1 or item["port"] > 65535:
+                raise ValueError("endpoint port must be between 1 and 65535")
+        normalized.append(item)
     MAVLINK_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    MAVLINK_CONFIG_FILE.write_text(json.dumps({"endpoints": endpoints}, indent=2) + "\n")
+    MAVLINK_CONFIG_FILE.write_text(json.dumps({"endpoints": normalized}, indent=2) + "\n")
     os.chmod(MAVLINK_CONFIG_FILE, 0o600)
     return read_mavlink_endpoints()
 

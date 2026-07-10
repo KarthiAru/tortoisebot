@@ -182,6 +182,10 @@ http://<hostname>.local
 
 The `.local` name depends on mDNS support on the client computer. Use the router-assigned IP if name resolution is unavailable.
 
+## Phase 2 Runtime Dependencies
+
+`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing.
+
 ## API Summary
 
 | Endpoint | Purpose |

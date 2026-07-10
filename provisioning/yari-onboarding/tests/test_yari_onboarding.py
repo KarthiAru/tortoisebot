@@ -85,8 +85,11 @@ class YariOnboardingTests(unittest.TestCase):
     def test_write_mavlink_endpoints_validates_type(self):
         config = self.module.write_mavlink_endpoints({"endpoints": [{"name": "fc", "type": "serial", "device": "/dev/ttyACM0"}]})
         self.assertEqual(config["endpoints"][0]["name"], "fc")
+        self.assertEqual(config["endpoints"][0]["baud"], 57600)
         with self.assertRaises(ValueError):
             self.module.write_mavlink_endpoints({"endpoints": [{"name": "bad", "type": "shell"}]})
+        with self.assertRaises(ValueError):
+            self.module.write_mavlink_endpoints({"endpoints": [{"name": "bad", "type": "udp", "port": 99999}]})
 
     def test_factory_reset_removes_saved_network_files(self):
         self.module.COMPLETE_FILE.parent.mkdir(parents=True, exist_ok=True)
