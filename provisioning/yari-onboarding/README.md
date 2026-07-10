@@ -184,7 +184,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 
 ## Phase 2 Runtime Dependencies
 
-`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing.
+`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly.
 
 ## API Summary
 

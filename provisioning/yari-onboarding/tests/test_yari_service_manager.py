@@ -56,5 +56,46 @@ class YariServiceManagerTests(unittest.TestCase):
         self.assertEqual(summary["items"][0]["status"], "missing")
 
 
+    def test_probe_autopilot_reports_missing_pymavlink(self):
+        self.module.import_mavutil = lambda: (None, "missing pymavlink")
+        result = self.module.probe_autopilot([{"name": "fc", "type": "serial", "device": "/dev/ttyACM0", "enabled": True}])
+        self.assertFalse(result["connected"])
+        self.assertEqual(result["detection"], "pymavlink-missing")
+
+    def test_probe_autopilot_decodes_heartbeat(self):
+        class FakeHeartbeat:
+            type = 2
+            autopilot = 12
+            base_mode = 128
+            custom_mode = 0
+            system_status = 4
+
+        class FakeConnection:
+            target_system = 1
+            target_component = 1
+            flightmode = "MANUAL"
+            def wait_heartbeat(self, timeout=0):
+                return FakeHeartbeat()
+            def recv_match(self, blocking=False):
+                return None
+            def close(self):
+                pass
+
+        class FakeMavlink:
+            MAV_MODE_FLAG_SAFETY_ARMED = 128
+
+        class FakeMavutil:
+            mavlink = FakeMavlink()
+            def mavlink_connection(self, target, **kwargs):
+                return FakeConnection()
+
+        self.module.import_mavutil = lambda: (FakeMavutil(), None)
+        result = self.module.probe_autopilot([{"name": "fc", "type": "serial", "device": "/dev/ttyACM0", "enabled": True}], timeout=0.1)
+        self.assertTrue(result["connected"])
+        self.assertEqual(result["flight_stack"], "PX4")
+        self.assertEqual(result["mode"], "MANUAL")
+        self.assertTrue(result["armed"])
+
+
 if __name__ == "__main__":
     unittest.main()

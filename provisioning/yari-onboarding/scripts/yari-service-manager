@@ -124,20 +124,162 @@ def mavlink_router_status():
     }
 
 
+
+def mavlink_connection_target(endpoint):
+    if endpoint.get("type") == "serial":
+        return str(endpoint.get("device") or "/dev/ttyACM0"), int(endpoint.get("baud", 57600))
+    if endpoint.get("type") == "udp":
+        host = endpoint.get("host") or "0.0.0.0"
+        port = int(endpoint.get("port", 14550))
+        mode = endpoint.get("mode") or "udpin"
+        if mode not in {"udpin", "udpout", "udp"}:
+            mode = "udpin"
+        return f"{mode}:{host}:{port}", None
+    return None, None
+
+
+def import_mavutil():
+    try:
+        from pymavlink import mavutil
+        return mavutil, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def mavlink_autopilot_name(value):
+    mapping = {
+        3: "ArduPilot",
+        12: "PX4",
+    }
+    return mapping.get(value, f"unknown({value})" if value is not None else "unknown")
+
+
+def heartbeat_summary(connection, heartbeat, mavutil):
+    base_mode = getattr(heartbeat, "base_mode", None)
+    autopilot = getattr(heartbeat, "autopilot", None)
+    armed_flag = getattr(mavutil.mavlink, "MAV_MODE_FLAG_SAFETY_ARMED", 128)
+    return {
+        "type": getattr(heartbeat, "type", None),
+        "autopilot": autopilot,
+        "flight_stack": mavlink_autopilot_name(autopilot),
+        "base_mode": base_mode,
+        "custom_mode": getattr(heartbeat, "custom_mode", None),
+        "system_status": getattr(heartbeat, "system_status", None),
+        "mode": getattr(connection, "flightmode", None),
+        "armed": bool(base_mode & armed_flag) if base_mode is not None else None,
+        "system_id": getattr(connection, "target_system", None),
+        "component_id": getattr(connection, "target_component", None),
+    }
+
+
+def collect_mavlink_status(connection, deadline):
+    battery = None
+    gps = None
+    version = None
+    while time.monotonic() < deadline and (battery is None or gps is None or version is None):
+        try:
+            msg = connection.recv_match(blocking=False)
+        except Exception:
+            break
+        if msg is None:
+            time.sleep(0.05)
+            continue
+        msg_type = msg.get_type() if hasattr(msg, "get_type") else ""
+        if msg_type == "BATTERY_STATUS":
+            voltages = getattr(msg, "voltages", []) or []
+            valid = [value for value in voltages if isinstance(value, int) and value not in {0, 65535}]
+            battery = {
+                "voltage_v": round(sum(valid) / 1000, 2) if valid else None,
+                "remaining_percent": getattr(msg, "battery_remaining", None),
+            }
+        elif msg_type == "SYS_STATUS":
+            voltage = getattr(msg, "voltage_battery", None)
+            battery = {
+                "voltage_v": round(voltage / 1000, 2) if isinstance(voltage, int) and voltage > 0 else None,
+                "remaining_percent": getattr(msg, "battery_remaining", None),
+            }
+        elif msg_type == "GPS_RAW_INT":
+            gps = {
+                "fix_type": getattr(msg, "fix_type", None),
+                "satellites_visible": getattr(msg, "satellites_visible", None),
+                "lat": getattr(msg, "lat", None),
+                "lon": getattr(msg, "lon", None),
+                "alt_mm": getattr(msg, "alt", None),
+            }
+        elif msg_type == "AUTOPILOT_VERSION":
+            version = {
+                "flight_sw_version": getattr(msg, "flight_sw_version", None),
+                "middleware_sw_version": getattr(msg, "middleware_sw_version", None),
+                "board_version": getattr(msg, "board_version", None),
+                "vendor_id": getattr(msg, "vendor_id", None),
+                "product_id": getattr(msg, "product_id", None),
+            }
+    return {"battery": battery, "gps": gps, "version": version}
+
+
+def probe_autopilot(endpoints, timeout=2.5):
+    enabled = [endpoint for endpoint in endpoints if endpoint.get("enabled")]
+    candidates = [endpoint for endpoint in enabled if endpoint.get("type") in {"serial", "udp"}]
+    if not candidates:
+        return {"connected": False, "detection": "no-enabled-mavlink-endpoint"}
+    mavutil, import_error = import_mavutil()
+    if mavutil is None:
+        return {"connected": False, "detection": "pymavlink-missing", "error": import_error}
+    errors = []
+    for endpoint in candidates:
+        target, baud = mavlink_connection_target(endpoint)
+        if not target:
+            continue
+        try:
+            kwargs = {"autoreconnect": True}
+            if baud:
+                kwargs["baud"] = baud
+            connection = mavutil.mavlink_connection(target, **kwargs)
+            heartbeat = connection.wait_heartbeat(timeout=timeout)
+        except Exception as exc:
+            errors.append({"endpoint": endpoint.get("name") or target, "error": str(exc)})
+            continue
+        if heartbeat is None:
+            errors.append({"endpoint": endpoint.get("name") or target, "error": "heartbeat timeout"})
+            continue
+        summary = heartbeat_summary(connection, heartbeat, mavutil)
+        status = collect_mavlink_status(connection, time.monotonic() + 1.0)
+        try:
+            connection.close()
+        except Exception:
+            pass
+        return {
+            "connected": True,
+            "detection": "heartbeat",
+            "endpoint": endpoint,
+            "heartbeat": summary,
+            "flight_stack": summary.get("flight_stack"),
+            "mode": summary.get("mode"),
+            "armed": summary.get("armed"),
+            "battery": status.get("battery"),
+            "gps": status.get("gps"),
+            "version": status.get("version"),
+        }
+    return {"connected": False, "detection": "no-heartbeat", "errors": errors}
+
 def autopilot_manager_status():
     serial_devices = glob_paths(["/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*", "/dev/ttyAMA*"])
+    endpoints = read_json(MAVLINK_CONFIG_FILE, {"endpoints": []}).get("endpoints", [])
+    probe = probe_autopilot(endpoints)
     return {
         **service_status("autopilot-manager"),
-        "flight_stack": "unknown",
-        "connected": bool(serial_devices),
+        "flight_stack": probe.get("flight_stack", "unknown"),
+        "connected": bool(probe.get("connected")),
         "serial_devices": serial_devices,
-        "heartbeat": None,
-        "version": None,
-        "mode": None,
-        "battery": None,
-        "gps": None,
-        "armed": None,
-        "detection": "serial-device-present" if serial_devices else "waiting-for-autopilot",
+        "endpoints": endpoints,
+        "heartbeat": probe.get("heartbeat"),
+        "version": probe.get("version"),
+        "mode": probe.get("mode"),
+        "battery": probe.get("battery"),
+        "gps": probe.get("gps"),
+        "armed": probe.get("armed"),
+        "detection": probe.get("detection"),
+        "probe": probe,
     }
 
 
