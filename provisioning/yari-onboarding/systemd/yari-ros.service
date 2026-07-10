@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/yari-service-placeholder yari-ros
+ExecStart=/usr/local/sbin/yari-service-manager ros
 Restart=on-failure
 RestartSec=5
 

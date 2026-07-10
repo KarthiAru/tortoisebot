@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/yari-service-placeholder yari-mavlink-router
+ExecStart=/usr/local/sbin/yari-service-manager mavlink-router
 Restart=on-failure
 RestartSec=5
 

@@ -30,6 +30,7 @@ NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Je
 ```text
 /usr/local/sbin/yari-onboarding
 /usr/local/sbin/yari-service-placeholder
+/usr/local/sbin/yari-service-manager
 /etc/systemd/system/yari-onboarding.service
 /etc/systemd/system/yari-agent.service
 /etc/systemd/system/yari-mavlink-router.service

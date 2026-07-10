@@ -33,6 +33,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.PORTAL_CONFIG_FILE = root / "portal.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
+        self.module.SERVICE_STATE_DIR = root / "services"
         self.module.APPLY_NETWORK = False
         self.commands = []
         self.module.run = self.fake_run
@@ -111,6 +112,23 @@ class YariOnboardingTests(unittest.TestCase):
         status = self.module.network_status()
         self.assertIn("static_ip", status["config"])
         self.assertIn("lte", status["config"])
+
+
+    def test_autopilot_status_uses_manager_heartbeat_file(self):
+        self.module.SERVICE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.SERVICE_STATE_DIR / "autopilot-manager.json").write_text('{"connected": true, "flight_stack": "PX4", "mode": "MANUAL", "updated": 1}')
+        status = self.module.autopilot_status()
+        self.assertTrue(status["connected"])
+        self.assertEqual(status["flight_stack"], "PX4")
+        self.assertEqual(status["mode"], "MANUAL")
+
+    def test_ros_status_uses_service_manager_topics_and_recording(self):
+        self.module.SERVICE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.SERVICE_STATE_DIR / "ros.json").write_text('{"installed": true, "nodes": ["/camera"], "topics": ["/scan [sensor_msgs/msg/LaserScan]"], "recording": {"active": true}, "updated": 1}')
+        status = self.module.ros_status()
+        self.assertEqual(status["nodes"], ["/camera"])
+        self.assertTrue(status["recording"]["active"])
+        self.assertIn("/scan [sensor_msgs/msg/LaserScan]", status["topics"])
 
     def test_support_bundle_contains_status_files(self):
         bundle = self.module.support_bundle()

@@ -492,6 +492,7 @@ if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "tr
   install -d "${ROOT_MOUNT}/usr/local/sbin" "${ROOT_MOUNT}/opt/yari/onboarding/web" "${ROOT_MOUNT}/etc/systemd/system" "${ROOT_MOUNT}/etc/yari" "${ROOT_MOUNT}/var/lib/yari/onboarding"
   install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-onboarding" "${ROOT_MOUNT}/usr/local/sbin/yari-onboarding"
   install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-service-placeholder" "${ROOT_MOUNT}/usr/local/sbin/yari-service-placeholder"
+  install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-service-manager" "${ROOT_MOUNT}/usr/local/sbin/yari-service-manager"
   install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/"*.service "${ROOT_MOUNT}/etc/systemd/system/"
   cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
   find "${ROOT_MOUNT}/opt/yari/onboarding/web" -name '*:Zone.Identifier' -delete || true

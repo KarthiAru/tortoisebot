@@ -20,6 +20,7 @@ STATE_FILE = STATE_DIR / "state.json"
 COMPLETE_FILE = STATE_DIR / "complete"
 DEVICE_ID_FILE = STATE_DIR / "device-id"
 SUPPORT_BUNDLE_DIR = STATE_DIR / "support-bundles"
+SERVICE_STATE_DIR = Path(os.environ.get("YARI_SERVICE_STATE_DIR", "/var/lib/yari/services"))
 WEB_DIR = Path(os.environ.get("YARI_ONBOARDING_WEB_DIR", "/opt/yari/onboarding/web"))
 DEVICE_CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 NETPLAN_DIR = Path(os.environ.get("YARI_ONBOARDING_NETPLAN_DIR", "/etc/netplan"))
@@ -148,6 +149,15 @@ def redact_secret(value):
     if not value:
         return {"configured": False}
     return {"configured": True, "length": len(str(value)), "preview": str(value)[:4] + "..."}
+
+
+def service_manager_status(role):
+    payload = read_json_file(SERVICE_STATE_DIR / f"{role}.json", {})
+    if not payload:
+        return {"available": False, "message": f"yari-{role} service has not written status yet"}
+    payload["available"] = True
+    payload["age_seconds"] = max(0, int(time.time()) - int(payload.get("updated", 0)))
+    return payload
 
 
 def save_ssh_access(ssh_key="", ssh_password=""):
@@ -651,22 +661,25 @@ def glob_paths(patterns):
 
 def autopilot_status():
     serial_devices = glob_paths(["/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*", "/dev/ttyAMA*"])
+    manager_payload = service_manager_status("autopilot-manager")
+    router_payload = service_manager_status("mavlink-router")
     return {
         "supported": True,
-        "connected": bool(serial_devices),
-        "serial_devices": serial_devices,
+        "connected": manager_payload.get("connected", bool(serial_devices)),
+        "serial_devices": manager_payload.get("serial_devices", serial_devices),
         "mavlink_router": service_status("yari-mavlink-router"),
         "manager": service_status("yari-autopilot-manager"),
-        "endpoints": read_mavlink_endpoints(),
-        "flight_stack": "unknown",
-        "heartbeat": None,
-        "version": None,
-        "mode": None,
-        "battery": None,
-        "gps": None,
-        "armed": None,
+        "manager_state": manager_payload,
+        "router_state": router_payload,
+        "endpoints": router_payload.get("endpoints", read_mavlink_endpoints().get("endpoints", [])),
+        "flight_stack": manager_payload.get("flight_stack", "unknown"),
+        "heartbeat": manager_payload.get("heartbeat"),
+        "version": manager_payload.get("version"),
+        "mode": manager_payload.get("mode"),
+        "battery": manager_payload.get("battery"),
+        "gps": manager_payload.get("gps"),
+        "armed": manager_payload.get("armed"),
         "firmware_upload": {"supported": False, "message": "Firmware upload UI placeholder; flashing must remain hardware-profile aware."},
-        "message": "PX4/ArduPilot heartbeat parsing belongs in yari-autopilot-manager.service.",
     }
 
 
@@ -703,15 +716,18 @@ def ros_command(args, timeout=8):
 def ros_status():
     ros2 = command_output(["bash", "-lc", "command -v ros2"], timeout=5)
     nodes = ros_command(["ros2", "node", "list"], timeout=8) if ros2["ok"] else {"ok": False, "stdout": "", "stderr": "ros2 command not found"}
+    manager_payload = service_manager_status("ros")
     return {
-        "installed": ros2["ok"],
+        "installed": manager_payload.get("installed", ros2["ok"]),
         "ros_distro": os.environ.get("ROS_DISTRO") or "humble",
-        "nodes": [line for line in nodes["stdout"].splitlines() if line],
+        "nodes": manager_payload.get("nodes", [line for line in nodes["stdout"].splitlines() if line]),
+        "topics": manager_payload.get("topics", []),
         "topics_endpoint": "/api/ros/topics",
         "launch_profiles": ["tortoisebot-hardware", "drone-companion", "rover-companion"],
-        "recording": {"supported": False, "message": "Recording controls are reserved for yari-ros.service."},
+        "recording": manager_payload.get("recording", read_json_file(DEVICE_CONFIG_DIR / "ros-recording.json", {"active": False})),
         "error": nodes["stderr"],
         "service": service_status("yari-ros"),
+        "manager_state": manager_payload,
     }
 
 
@@ -727,12 +743,14 @@ def ros_topics():
 
 
 def video_status():
+    manager_payload = service_manager_status("video")
     return {
-        "devices": glob_paths(["/dev/video*", "/dev/media*"]),
+        "devices": manager_payload.get("devices", glob_paths(["/dev/video*", "/dev/media*"])),
         "service": service_status("yari-video"),
-        "profiles": ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"],
-        "settings": {"fps": None, "bandwidth": None, "encoding": None},
-        "preview": {"supported": False, "message": "Preview stream is provided by yari-video.service."},
+        "profiles": manager_payload.get("profiles", ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"]),
+        "settings": manager_payload.get("settings", read_json_file(DEVICE_CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None})),
+        "preview": {"supported": True, "message": "Preview is available through ROS/Foxglove/Atlas stream profiles when the video service is running."},
+        "manager_state": manager_payload,
         "message": "Camera pipelines can publish ROS image topics, Foxglove streams, RTSP, or Atlas WebRTC feeds.",
     }
 
@@ -744,13 +762,15 @@ def data_status():
             stat = path.stat()
             bags.append({"path": str(path), "bytes": stat.st_size, "modified": int(stat.st_mtime)})
     flight_logs = glob_paths(["/var/log/*/*.ulg", "/var/log/*.ulg", "/home/*/**/*.ulg", "/home/*/**/*.BIN", "/home/*/**/*.bin"])[:50]
+    manager_payload = service_manager_status("log-manager")
     return {
         "mcap_dir": str(MCAP_DIR),
-        "mcap_logs": bags,
-        "flight_logs": flight_logs,
-        "upload_queue": {"supported": False, "message": "Atlas upload queue belongs in yari-agent.service/yari-log-manager.service."},
-        "storage_cleanup": {"supported": False, "message": "Storage cleanup controls are planned for the data manager layer."},
+        "mcap_logs": manager_payload.get("mcap_logs", bags),
+        "flight_logs": manager_payload.get("flight_logs", flight_logs),
+        "upload_queue": manager_payload.get("upload_queue", []),
+        "storage_cleanup": {"supported": True, "message": "Manual cleanup should be confirmed by the operator before deleting logs."},
         "service": service_status("yari-log-manager"),
+        "manager_state": manager_payload,
     }
 
 

@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/sbin/yari-service-placeholder yari-autopilot-manager
+ExecStart=/usr/local/sbin/yari-service-manager autopilot-manager
 Restart=on-failure
 RestartSec=5
 

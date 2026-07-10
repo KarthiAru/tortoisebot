@@ -11,6 +11,7 @@ SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install -d -m 0755 /usr/local/sbin
 install -m 0755 "${SRC_ROOT}/scripts/yari-onboarding" /usr/local/sbin/yari-onboarding
 install -m 0755 "${SRC_ROOT}/scripts/yari-service-placeholder" /usr/local/sbin/yari-service-placeholder
+install -m 0755 "${SRC_ROOT}/scripts/yari-service-manager" /usr/local/sbin/yari-service-manager
 
 install -d -m 0755 /opt/yari/onboarding/web
 cp -a "${SRC_ROOT}/web/." /opt/yari/onboarding/web/
