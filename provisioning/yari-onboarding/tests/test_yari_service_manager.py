@@ -97,5 +97,20 @@ class YariServiceManagerTests(unittest.TestCase):
         self.assertTrue(result["armed"])
 
 
+    def test_video_pipeline_args_builds_rtsp_ffmpeg_command(self):
+        args = self.module.video_pipeline_args({"fps": 10, "encoding": "h264", "size": "320x240", "rtsp_url": "rtsp://127.0.0.1:8554/test"}, "/dev/video0")
+        self.assertEqual(args[0], "ffmpeg")
+        self.assertIn("/dev/video0", args)
+        self.assertIn("rtsp://127.0.0.1:8554/test", args)
+        self.assertIn("libx264", args)
+
+    def test_start_video_stream_reports_disabled_and_missing_ffmpeg(self):
+        disabled = self.module.start_video_stream({"stream_enabled": False}, ["/dev/video0"])
+        self.assertEqual(disabled["state"], "disabled")
+        self.module.command_exists = lambda name: False
+        missing = self.module.start_video_stream({"stream_enabled": True}, ["/dev/video0"])
+        self.assertEqual(missing["state"], "ffmpeg-missing")
+
+
 if __name__ == "__main__":
     unittest.main()

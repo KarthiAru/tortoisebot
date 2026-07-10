@@ -334,14 +334,65 @@ def log_manager_status():
     }
 
 
+
+def process_is_running(pid_file):
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (FileNotFoundError, ValueError, ProcessLookupError):
+        pid_file.unlink(missing_ok=True)
+        return None
+    except PermissionError:
+        return int(pid_file.read_text().strip())
+
+
+def video_pipeline_args(settings, device):
+    fps = int(settings.get("fps", 15))
+    encoding = str(settings.get("encoding") or "mjpeg").lower()
+    rtsp_url = settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video"
+    size = settings.get("size") or "640x480"
+    args = ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-fflags", "nobuffer", "-flags", "low_delay", "-f", "v4l2", "-framerate", str(fps), "-video_size", str(size), "-i", str(device)]
+    if encoding in {"h264", "h265"}:
+        codec = "libx264" if encoding == "h264" else "libx265"
+        args.extend(["-an", "-c:v", codec, "-preset", "ultrafast", "-tune", "zerolatency", "-f", "rtsp", rtsp_url])
+    else:
+        args.extend(["-an", "-c:v", "mjpeg", "-q:v", "5", "-f", "rtsp", rtsp_url])
+    return args
+
+
+def start_video_stream(settings, devices):
+    if not settings.get("stream_enabled", False):
+        return {"running": False, "state": "disabled", "message": "stream_enabled is false"}
+    if not devices:
+        return {"running": False, "state": "no-camera", "message": "no /dev/video* device found"}
+    if not command_exists("ffmpeg"):
+        return {"running": False, "state": "ffmpeg-missing", "message": "ffmpeg is not installed"}
+    device = settings.get("device") or devices[0]
+    pid_file = RUNTIME_DIR / "yari-video.pid"
+    running_pid = process_is_running(pid_file)
+    if running_pid:
+        return {"running": True, "state": "running", "pid": running_pid, "device": device, "rtsp_url": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video"}
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = RUNTIME_DIR / "yari-video.log"
+    args = video_pipeline_args(settings, device)
+    log_handle = log_file.open("ab")
+    proc = subprocess.Popen(args, stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    pid_file.write_text(str(proc.pid) + "\n")
+    return {"running": True, "state": "starting", "pid": proc.pid, "device": device, "rtsp_url": settings.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video", "log_file": str(log_file), "args": args}
+
 def video_status():
     v4l2 = command(["bash", "-lc", "command -v v4l2-ctl >/dev/null && v4l2-ctl --list-devices"], timeout=8)
+    devices = glob_paths(["/dev/video*", "/dev/media*"])
+    settings = read_json(CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None, "stream_enabled": False, "rtsp_url": "rtsp://127.0.0.1:8554/yari-video"})
+    stream = start_video_stream(settings, [device for device in devices if "/dev/video" in device])
     return {
         **service_status("video"),
-        "devices": glob_paths(["/dev/video*", "/dev/media*"]),
+        "devices": devices,
         "v4l2_devices": v4l2["stdout"],
         "profiles": ["foxglove-compressed", "atlas-webrtc", "rtsp-low-latency"],
-        "settings": read_json(CONFIG_DIR / "video.json", {"fps": 15, "encoding": "mjpeg", "bandwidth_kbps": None}),
+        "settings": settings,
+        "stream": stream,
     }
 
 

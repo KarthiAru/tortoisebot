@@ -141,12 +141,15 @@ class YariOnboardingTests(unittest.TestCase):
 
 
     def test_save_video_settings_validates_and_persists(self):
-        settings = self.module.save_video_settings({"fps": "20", "encoding": "mono8", "bandwidth_kbps": "512"})
+        settings = self.module.save_video_settings({"fps": "20", "encoding": "mono8", "bandwidth_kbps": "512", "stream_enabled": "on", "rtsp_url": "rtsp://127.0.0.1:8554/test"})
         self.assertEqual(settings["fps"], 20)
         self.assertEqual(settings["encoding"], "mono8")
+        self.assertTrue(settings["stream_enabled"])
         self.assertTrue(self.module.VIDEO_CONFIG_FILE.exists())
         with self.assertRaises(ValueError):
             self.module.save_video_settings({"fps": "0", "encoding": "mjpeg"})
+        with self.assertRaises(ValueError):
+            self.module.save_video_settings({"fps": "20", "encoding": "mjpeg", "rtsp_url": "http://bad"})
 
     def test_cleanup_data_logs_requires_known_candidates_and_confirm(self):
         self.module.MCAP_DIR.mkdir(parents=True, exist_ok=True)

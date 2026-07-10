@@ -184,7 +184,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 
 ## Phase 2 Runtime Dependencies
 
-`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly.
+`yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly. `yari-video.service` uses optional `ffmpeg` to push a configured `/dev/video*` stream to an RTSP URL when `stream_enabled` is true; without `ffmpeg` or a camera device, the portal reports the exact stream state.
 
 ## API Summary
 
@@ -214,8 +214,8 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
 | `POST /api/ros/recording/start` | Starts `ros2 bag record --storage mcap`; leave topics blank to record all topics. |
 | `POST /api/ros/recording/stop` | Sends SIGINT to the active rosbag process and updates recording state. |
-| `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, persisted stream settings. |
-| `POST /api/video/settings` | Saves FPS, encoding, and bandwidth settings for video service profiles. |
+| `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, persisted stream settings, and ffmpeg RTSP process state. |
+| `POST /api/video/settings` | Saves stream enablement, device, RTSP URL, frame size, FPS, encoding, and bandwidth settings. |
 | `GET /api/data/status` | MCAP files, PX4/ArduPilot flight logs, upload queue and storage cleanup status. |
 | `POST /api/data/uploads/enqueue` | Adds selected discovered MCAP/flight logs to the local Atlas upload queue. |
 | `POST /api/data/uploads/retry` | Requeues failed/uploaded/missing upload items. |

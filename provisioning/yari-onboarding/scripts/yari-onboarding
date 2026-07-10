@@ -849,7 +849,19 @@ def save_video_settings(payload):
     bandwidth_kbps = None if bandwidth in {None, ""} else int(bandwidth)
     if bandwidth_kbps is not None and bandwidth_kbps < 64:
         raise ValueError("bandwidth_kbps must be at least 64")
-    settings = {"fps": fps, "encoding": encoding, "bandwidth_kbps": bandwidth_kbps, "updated": int(time.time())}
+    rtsp_url = str(payload.get("rtsp_url") or "rtsp://127.0.0.1:8554/yari-video")
+    if not rtsp_url.startswith("rtsp://"):
+        raise ValueError("rtsp_url must start with rtsp://")
+    settings = {
+        "fps": fps,
+        "encoding": encoding,
+        "bandwidth_kbps": bandwidth_kbps,
+        "stream_enabled": bool(payload.get("stream_enabled") in {True, "true", "on", "1", 1}),
+        "device": str(payload.get("device") or ""),
+        "size": str(payload.get("size") or "640x480"),
+        "rtsp_url": rtsp_url,
+        "updated": int(time.time()),
+    }
     VIDEO_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     VIDEO_CONFIG_FILE.write_text(json.dumps(settings, indent=2) + "\n")
     os.chmod(VIDEO_CONFIG_FILE, 0o600)
