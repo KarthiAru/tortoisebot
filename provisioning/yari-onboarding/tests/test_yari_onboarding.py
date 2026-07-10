@@ -39,6 +39,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
+        self.module.HOSTNAME_FILE = root / "hostname"
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
         self.module.APPLY_NETWORK = False
@@ -112,6 +113,17 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(oct(self.module.PORTAL_SECRETS_FILE.stat().st_mode & 0o777), "0o600")
         self.assertTrue(status["atlas_token"]["configured"])
         self.assertNotIn("atlas-secret", str(status))
+
+    def test_save_setup_config_persists_atlas_upload_url(self):
+        result = self.module.save_setup_config({
+            "hostname": "tortoisebot",
+            "atlas_url": "http://atlas/api/v1",
+            "atlas_upload_url": "http://atlas/upload",
+        })
+        self.assertTrue(result["ok"])
+        config = self.module.read_json_file(self.module.PORTAL_CONFIG_FILE, {})
+        self.assertEqual(config["atlas_url"], "http://atlas/api/v1")
+        self.assertEqual(config["atlas_upload_url"], "http://atlas/upload")
 
     def test_regenerate_device_id_writes_override(self):
         state = self.module.regenerate_device_id()

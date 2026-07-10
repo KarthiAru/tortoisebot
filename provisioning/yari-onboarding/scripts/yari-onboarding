@@ -477,6 +477,8 @@ def save_setup_config(payload):
     config.update({"hostname": hostname, "updated": int(time.time())})
     if payload.get("atlas_url"):
         config["atlas_url"] = normalize_form_value(str(payload.get("atlas_url")))
+    if payload.get("atlas_upload_url"):
+        config["atlas_upload_url"] = normalize_form_value(str(payload.get("atlas_upload_url")))
     PORTAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     PORTAL_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
     os.chmod(PORTAL_CONFIG_FILE, 0o600)

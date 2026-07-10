@@ -136,7 +136,7 @@ Next hardening step:
 
 ## Phase 1/2 Implementation Status
 
-This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific MAVLink parsing, video streaming, ROS launch orchestration, firmware upload, and Atlas upload workers remain future implementation work. ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management, MAVLink router config generation/process supervision, and optional `pymavlink` heartbeat/status probing, and opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues are now implemented in the portal/service layer.
+This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific firmware upload, production Atlas API contract validation, and full ROS launch orchestration remain future implementation work. ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management with multipart upload transport, MAVLink router config generation/process supervision, optional `pymavlink` heartbeat/status probing, opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues are now implemented in the portal/service layer.
 
 Implemented Phase 1 pieces:
 
@@ -165,7 +165,7 @@ Remaining Phase 2 implementation work:
 - Implement MAVLink router config generation and live reload.
 - Implement ROS launch profile management and MCAP start/stop controls.
 - Implement camera preview/stream controls for RTSP, WebRTC, and Foxglove-friendly compressed topics.
-- Implement Atlas upload queue, log retention, storage cleanup, and retry/failure reporting.
+- Validate the Atlas upload queue against the production Atlas ingestion API and add resumable/streaming uploads for large logs.
 
 ## Recovery Commands
 

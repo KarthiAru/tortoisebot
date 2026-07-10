@@ -5,7 +5,10 @@ import os
 import signal
 import subprocess
 import time
+import uuid
 from pathlib import Path
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 
 STATE_DIR = Path(os.environ.get("YARI_SERVICE_STATE_DIR", "/var/lib/yari/services"))
 RUNTIME_DIR = Path(os.environ.get("YARI_SERVICE_RUNTIME_DIR", "/run/yari"))
@@ -437,6 +440,82 @@ def download_counts(items):
         counts[status] = counts.get(status, 0) + 1
     return counts
 
+
+def atlas_upload_endpoint(config):
+    if config.get("atlas_upload_url"):
+        return str(config["atlas_upload_url"])
+    atlas_url = str(config.get("atlas_url") or "").rstrip("/")
+    if not atlas_url:
+        return ""
+    return f"{atlas_url}/logs/upload"
+
+
+def multipart_upload(url, token, file_path, metadata, timeout=30):
+    boundary = f"----yari-{uuid.uuid4().hex}"
+    path = Path(file_path)
+    fields = {"metadata": json.dumps(metadata)}
+    body = bytearray()
+    for name, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        body.extend(str(value).encode())
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}\r\n".encode())
+    body.extend(f'Content-Disposition: form-data; name="file"; filename="{path.name}"\r\n'.encode())
+    body.extend(b"Content-Type: application/octet-stream\r\n\r\n")
+    body.extend(path.read_bytes())
+    body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+    req = urlrequest.Request(url, data=bytes(body), method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("User-Agent", "yari-os-agent/0.1")
+    with urlrequest.urlopen(req, timeout=timeout) as response:
+        response_body = response.read(4096).decode("utf-8", errors="replace")
+        return {"status": getattr(response, "status", response.getcode()), "body": response_body}
+
+
+def process_upload_queue(config, secrets, max_items=1):
+    items = read_upload_queue()
+    endpoint = atlas_upload_endpoint(config)
+    token = secrets.get("atlas_token")
+    if not endpoint or not token:
+        return {"items": items, "counts": upload_counts(items), "state": "waiting-for-atlas-config", "endpoint_configured": bool(endpoint), "token_configured": bool(token)}
+    changed = False
+    processed = 0
+    for item in items:
+        if item.get("status") != "queued" or processed >= max_items:
+            continue
+        path = Path(str(item.get("path", "")))
+        if not path.exists():
+            item.update({"status": "missing", "updated": int(time.time()), "error": "file does not exist"})
+            changed = True
+            continue
+        item["attempts"] = int(item.get("attempts", 0)) + 1
+        item["status"] = "uploading"
+        item["updated"] = int(time.time())
+        changed = True
+        try:
+            response = multipart_upload(endpoint, token, path, item)
+            item.update({"status": "uploaded", "uploaded": int(time.time()), "response": response})
+        except HTTPError as exc:
+            body = exc.read(2048).decode("utf-8", errors="replace") if hasattr(exc, "read") else ""
+            item.update({"status": "failed", "updated": int(time.time()), "error": {"type": "http", "code": exc.code, "body": body}})
+        except (URLError, TimeoutError, OSError) as exc:
+            item.update({"status": "failed", "updated": int(time.time()), "error": {"type": "network", "message": str(exc)}})
+        processed += 1
+    if changed:
+        write_upload_queue(items)
+    return {"items": items, "counts": upload_counts(items), "state": "processed" if processed else "idle", "endpoint": endpoint}
+
+
+def upload_counts(items):
+    counts = {}
+    for item in items:
+        status = item.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
 def read_upload_queue():
     payload = read_json(UPLOAD_QUEUE_FILE, {"items": []})
     items = payload.get("items", []) if isinstance(payload, dict) else []
@@ -572,12 +651,14 @@ def agent_status():
     config_file = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
     secrets = read_json(secrets_file, {})
     config = read_json(config_file, {})
+    uploads = process_upload_queue(config, secrets)
     return {
         **service_status("agent"),
         "atlas_url": config.get("atlas_url"),
+        "atlas_upload_url": atlas_upload_endpoint(config),
         "atlas_token_configured": bool(secrets.get("atlas_token")),
         "foxglove_token_configured": bool(secrets.get("foxglove_token")),
-        "upload_queue": upload_queue_summary(),
+        "upload_queue": uploads,
     }
 
 

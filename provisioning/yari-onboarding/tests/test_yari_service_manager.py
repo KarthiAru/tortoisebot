@@ -150,5 +150,31 @@ class YariServiceManagerTests(unittest.TestCase):
         self.assertEqual(missing["state"], "ffmpeg-missing")
 
 
+    def test_process_upload_queue_waits_for_atlas_config(self):
+        self.module.write_upload_queue([{"id": "one", "path": "/tmp/missing.mcap", "status": "queued"}])
+        result = self.module.process_upload_queue({}, {})
+        self.assertEqual(result["state"], "waiting-for-atlas-config")
+        self.assertFalse(result["token_configured"])
+
+    def test_process_upload_queue_marks_successful_upload(self):
+        log = Path(self.tmp.name) / "sample.mcap"
+        log.write_text("bag")
+        self.module.write_upload_queue([{"id": "one", "path": str(log), "status": "queued", "kind": "mcap"}])
+        calls = []
+        def fake_upload(url, token, file_path, metadata, timeout=30):
+            calls.append((url, token, file_path, metadata))
+            return {"status": 201, "body": "ok"}
+        self.module.multipart_upload = fake_upload
+        result = self.module.process_upload_queue({"atlas_url": "http://atlas/api/v1"}, {"atlas_token": "secret"})
+        self.assertEqual(result["items"][0]["status"], "uploaded")
+        self.assertEqual(calls[0][0], "http://atlas/api/v1/logs/upload")
+        self.assertEqual(calls[0][1], "secret")
+
+    def test_process_upload_queue_marks_missing_files(self):
+        self.module.write_upload_queue([{"id": "one", "path": "/tmp/definitely-missing-upload.mcap", "status": "queued"}])
+        result = self.module.process_upload_queue({"atlas_upload_url": "http://atlas/upload"}, {"atlas_token": "secret"})
+        self.assertEqual(result["items"][0]["status"], "missing")
+
+
 if __name__ == "__main__":
     unittest.main()
