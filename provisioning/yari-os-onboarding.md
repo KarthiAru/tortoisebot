@@ -152,7 +152,7 @@ Implemented Phase 1 pieces:
 
 Implemented Phase 2 foundation:
 
-- Systemd unit templates for `yari-mavlink-router`, `yari-autopilot-manager`, `yari-log-manager`, `yari-video`, `yari-ros`, and `yari-agent`.
+- Systemd units for `yari-mavlink-router`, `yari-autopilot-manager`, `yari-log-manager`, `yari-video`, `yari-ros`, and `yari-agent`, enabled by the onboarding installer so they publish companion-layer status on boot.
 - Autopilot portal page with serial-device discovery, MAVLink endpoint config, PX4/ArduPilot status, and firmware-upload placeholder.
 - ROS 2 portal page with ROS presence, node list, topic list, configurable launch profile controls, and bag/MCAP recording controls.
 - Video portal page with camera/media device discovery, local JPEG preview, RTSP stream settings, and Foxglove/Atlas stream target metadata.
