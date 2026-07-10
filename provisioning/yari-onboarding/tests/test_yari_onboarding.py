@@ -31,6 +31,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
         self.module.PORTAL_SECRETS_FILE = root / "secrets.json"
         self.module.PORTAL_CONFIG_FILE = root / "portal.json"
+        self.module.STATIC_NETWORK_CONFIG_FILE = root / "static-network.json"
         self.module.VIDEO_CONFIG_FILE = root / "video.json"
         self.module.ROS_RECORDING_CONFIG_FILE = root / "ros-recording.json"
         self.module.ROS_RECORDING_PID_FILE = root / "ros-record.pid"
@@ -147,7 +148,23 @@ class YariOnboardingTests(unittest.TestCase):
     def test_network_status_includes_phase_one_placeholders(self):
         status = self.module.network_status()
         self.assertIn("static_ip", status["config"])
+        self.assertTrue(status["config"]["static_ip"]["supported"])
         self.assertIn("lte", status["config"])
+
+    def test_save_static_ip_config_validates_and_modifies_networkmanager(self):
+        self.module.APPLY_NETWORK = True
+        result = self.module.save_static_ip_config({
+            "enabled": True,
+            "connection_name": "yari-wifi",
+            "address_cidr": "192.168.0.50/24",
+            "gateway": "192.168.0.1",
+            "dns": "1.1.1.1,8.8.8.8",
+        })
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["static_ip"]["address_cidr"], "192.168.0.50/24")
+        self.assertIn(["nmcli", "connection", "modify", "yari-wifi", "ipv4.method", "manual", "ipv4.addresses", "192.168.0.50/24", "ipv4.gateway", "192.168.0.1", "ipv4.dns", "1.1.1.1,8.8.8.8", "ipv6.method", "ignore"], self.commands)
+        with self.assertRaises(ValueError):
+            self.module.save_static_ip_config({"enabled": True, "address_cidr": "not-an-ip"})
 
     def test_device_status_includes_hardware_model(self):
         self.module.DEVICE_MODEL_PATHS[0].write_text("Raspberry Pi 5 Model B\x00")

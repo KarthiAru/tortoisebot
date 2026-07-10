@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -46,6 +47,7 @@ DEVICE_MODEL_PATHS = [
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
 PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
 PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
+STATIC_NETWORK_CONFIG_FILE = Path(os.environ.get("YARI_STATIC_NETWORK_CONFIG_FILE", "/etc/yari/static-network.json"))
 ONBOARDING_USER = os.environ.get("YARI_ONBOARDING_USER", "tortoisebot")
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 ROS_RECORDING_PID_FILE = STATE_DIR / "rosbag-record.pid"
@@ -387,10 +389,21 @@ def nm_keyfile_value(value):
     return value.replace("\\", "\\\\").replace(";", "\\;")
 
 
+def static_ip_keyfile_lines(config):
+    if not config.get("enabled"):
+        return ["method=auto"]
+    lines = ["method=manual", f"address1={config['address_cidr']},{config.get('gateway', '')}"]
+    dns = config.get("dns") or []
+    if dns:
+        lines.append(f"dns={';'.join(dns)};")
+    return lines
+
+
 def write_networkmanager_wifi(ssid, password):
     NM_CONNECTION_DIR.mkdir(parents=True, exist_ok=True)
     run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
     connection = NM_CONNECTION_DIR / "yari-wifi.nmconnection"
+    static_config = read_static_ip_config()
     content = "\n".join([
         "[connection]",
         "id=yari-wifi",
@@ -409,7 +422,7 @@ def write_networkmanager_wifi(ssid, password):
         f"psk={nm_keyfile_value(password)}",
         "",
         "[ipv4]",
-        "method=auto",
+        *static_ip_keyfile_lines(static_config),
         "",
         "[ipv6]",
         "method=ignore",
@@ -449,6 +462,90 @@ def write_netplan(ssid, password):
     cloud = CLOUD_CFG_DIR / "99-yari-disable-network-config.cfg"
     cloud.parent.mkdir(parents=True, exist_ok=True)
     cloud.write_text("network: {config: disabled}\n")
+
+
+def parse_bool(value):
+    return value in {True, "true", "on", "1", "yes", "enabled", 1}
+
+
+def read_static_ip_config():
+    config = read_json_file(STATIC_NETWORK_CONFIG_FILE, {})
+    if not isinstance(config, dict):
+        config = {}
+    return {
+        "enabled": bool(config.get("enabled", False)),
+        "connection_name": str(config.get("connection_name") or "yari-wifi"),
+        "address_cidr": str(config.get("address_cidr") or ""),
+        "gateway": str(config.get("gateway") or ""),
+        "dns": [str(item) for item in config.get("dns", []) if item],
+        "config_file": str(STATIC_NETWORK_CONFIG_FILE),
+    }
+
+
+def normalize_static_ip_config(payload):
+    enabled = parse_bool(payload.get("enabled"))
+    connection_name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(payload.get("connection_name") or "yari-wifi")).strip("-") or "yari-wifi"
+    address = str(payload.get("address_cidr") or payload.get("address") or "").strip()
+    gateway = str(payload.get("gateway") or "").strip()
+    dns_value = payload.get("dns") or []
+    if isinstance(dns_value, str):
+        dns = [item for item in re.split(r"[\s,;]+", dns_value.strip()) if item]
+    elif isinstance(dns_value, list):
+        dns = [str(item).strip() for item in dns_value if str(item).strip()]
+    else:
+        raise ValueError("dns must be a string or list")
+    if enabled:
+        if not address:
+            raise ValueError("address_cidr is required when static IP is enabled")
+        try:
+            ipaddress.ip_interface(address)
+        except ValueError as exc:
+            raise ValueError(f"invalid static address_cidr: {exc}") from exc
+        if gateway:
+            try:
+                ipaddress.ip_address(gateway)
+            except ValueError as exc:
+                raise ValueError(f"invalid gateway: {exc}") from exc
+        for server in dns:
+            try:
+                ipaddress.ip_address(server)
+            except ValueError as exc:
+                raise ValueError(f"invalid DNS server {server}: {exc}") from exc
+    return {"enabled": enabled, "connection_name": connection_name, "address_cidr": address, "gateway": gateway, "dns": dns}
+
+
+def apply_static_ip_networkmanager(config):
+    connection_name = config.get("connection_name") or "yari-wifi"
+    if config.get("enabled"):
+        args = [
+            "nmcli", "connection", "modify", connection_name,
+            "ipv4.method", "manual",
+            "ipv4.addresses", config["address_cidr"],
+            "ipv4.gateway", config.get("gateway", ""),
+            "ipv4.dns", ",".join(config.get("dns", [])),
+            "ipv6.method", "ignore",
+        ]
+    else:
+        args = [
+            "nmcli", "connection", "modify", connection_name,
+            "ipv4.method", "auto",
+            "ipv4.addresses", "",
+            "ipv4.gateway", "",
+            "ipv4.dns", "",
+            "ipv6.method", "ignore",
+        ]
+    run(args, check=True)
+    run(["nmcli", "connection", "reload"], check=True)
+
+
+def save_static_ip_config(payload):
+    config = normalize_static_ip_config(payload)
+    STATIC_NETWORK_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATIC_NETWORK_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(STATIC_NETWORK_CONFIG_FILE, 0o600)
+    if has_command("nmcli") and APPLY_NETWORK:
+        apply_static_ip_networkmanager(config)
+    return {"ok": True, "static_ip": read_static_ip_config(), "applied": bool(has_command("nmcli") and APPLY_NETWORK)}
 
 
 def configure_wifi(ssid, password, hostname=""):
@@ -1259,7 +1356,7 @@ def network_config_placeholders():
         "ap_mode": {"ssid": ap_ssid(), "address": AP_ADDR, "security": "wpa-psk" if AP_PASSWORD else "open"},
         "client_wifi": {"profile": "yari-wifi", "configured_ssid": read_configured_ssid()},
         "ethernet": {"managed_by": "NetworkManager", "dhcp": True},
-        "static_ip": {"supported": False, "message": "Static IP UI/API is planned for the network adapter layer."},
+        "static_ip": {"supported": True, **read_static_ip_config()},
         "dns": {"servers": dns_status()},
         "lte": {"supported": False, "message": "LTE modem support placeholder."},
     }
@@ -1475,6 +1572,9 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/network/ap/enable":
                 ensure_ap()
                 self.send_json(200, {"ok": True, "state": read_state()})
+                return
+            if path == "/api/network/static-ip":
+                self.send_json(200, save_static_ip_config(payload))
                 return
             if path == "/api/network/factory-reset":
                 self.send_json(200, {"ok": True, "state": factory_reset(bool(payload.get("reboot", False)))})

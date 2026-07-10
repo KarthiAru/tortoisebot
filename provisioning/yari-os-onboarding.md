@@ -145,7 +145,7 @@ Implemented Phase 1 pieces:
 - Reboot-after-save behavior for single-radio devices.
 - Setup fields for Wi-Fi scan, password, hostname, SSH key/password, Atlas token, and Foxglove token.
 - Device status with hardware model, OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, and onboarding state.
-- Network status with active connections, interfaces, AP/client state, DNS, static-IP placeholder, Ethernet, and LTE placeholder.
+- Network status with active connections, interfaces, AP/client state, DNS, configurable static IPv4, Ethernet, and LTE placeholder.
 - Allowlisted service start/stop/restart/enable/disable/logs for YARI-managed services only.
 - Logs page with onboarding, system journal, ROS log, MAVLink log views, and downloadable support bundle endpoint.
 - Maintenance controls for reboot, shutdown, factory-reset network, and regenerate device ID.

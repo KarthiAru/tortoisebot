@@ -195,10 +195,11 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `POST /api/device/regenerate-id` | Generate a new local YARI device ID override. |
 | `GET /api/setup/status` | SSH key count and redacted Atlas/Foxglove token status. |
 | `POST /api/setup/config` | Save Wi-Fi, hostname, SSH key/password, Atlas URL/upload URL, Atlas token, and Foxglove token. |
-| `GET /api/network/status` | NetworkManager state, interfaces, active connections, AP/client config, DNS, Ethernet, static-IP placeholder, LTE placeholder. |
+| `GET /api/network/status` | NetworkManager state, interfaces, active connections, AP/client config, DNS, Ethernet, static IPv4 config, LTE placeholder. |
 | `GET /api/network/wifi/scan` | Wi-Fi scan results. |
 | `POST /api/network/wifi/save` | Save SSID/password/hostname and optionally reboot. |
 | `POST /api/network/ap/enable` | Start setup AP mode. |
+| `POST /api/network/static-ip` | Save validated static IPv4 settings and apply them to a NetworkManager connection when available. |
 | `POST /api/network/factory-reset` | Clear saved YARI network config and onboarding completion state. |
 | `GET /api/services` | Status for known YARI services. |
 | `POST /api/services/<name>/start` | Start service. Also supports `stop`, `restart`, `enable`, `disable`. |

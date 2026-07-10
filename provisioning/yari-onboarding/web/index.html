@@ -224,6 +224,7 @@
           <div id="wifi-list"></div>
         </div>
         <div class="card"><h2>Network Status</h2><pre id="network-status">Loading...</pre></div>
+        <div class="card"><h2>Static IP</h2><form id="static-ip-form"><label><input name="enabled" type="checkbox"> Enable static IPv4</label><label>Connection<input name="connection_name" value="yari-wifi"></label><label>Address/CIDR<input name="address_cidr" placeholder="192.168.0.50/24"></label><label>Gateway<input name="gateway" placeholder="192.168.0.1"></label><label>DNS servers<input name="dns" placeholder="1.1.1.1,8.8.8.8"></label><button type="submit">Save static IP</button></form><pre id="static-ip-status">Loading...</pre></div>
         <div class="card"><h2>Network Features</h2><pre id="network-features">Loading...</pre></div>
       </div>
     </section>
@@ -346,6 +347,13 @@
       const data = await api('/api/network/status');
       setPre('#network-status', data);
       setPre('#network-features', data.config || {});
+      const staticIp = data.config?.static_ip || {};
+      $('#static-ip-form [name="enabled"]').checked = Boolean(staticIp.enabled);
+      $('#static-ip-form [name="connection_name"]').value = staticIp.connection_name || 'yari-wifi';
+      $('#static-ip-form [name="address_cidr"]').value = staticIp.address_cidr || '';
+      $('#static-ip-form [name="gateway"]').value = staticIp.gateway || '';
+      $('#static-ip-form [name="dns"]').value = (staticIp.dns || []).join(',');
+      setPre('#static-ip-status', staticIp);
     }
     function renderWifiList(selector, data) {
       const rows = (data.networks || []).map((n) => `<tr><td>${escapeHtml(n.ssid)}</td><td>${escapeHtml(n.signal)}</td><td>${escapeHtml(n.security || 'open')}</td><td>${escapeHtml(n.channel)}</td></tr>`).join('');
@@ -424,6 +432,13 @@
     $('#scan-wifi').addEventListener('click', () => refreshWifiScan('#wifi-list'));
     $('#setup-scan-wifi').addEventListener('click', () => refreshWifiScan('#setup-wifi-list'));
     $('#enable-ap').addEventListener('click', async () => { setPre('#network-status', await post('/api/network/ap/enable')); });
+    $('#static-ip-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+      body.enabled = $('#static-ip-form [name="enabled"]').checked;
+      setPre('#static-ip-status', await post('/api/network/static-ip', body));
+      await refreshNetwork();
+    });
     $('#setup-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       setPre('#setup-state', 'Saving setup settings...');
