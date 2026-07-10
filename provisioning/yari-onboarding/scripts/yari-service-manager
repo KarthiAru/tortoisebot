@@ -18,6 +18,8 @@ MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
 FLIGHT_LOG_DIR = Path(os.environ.get("YARI_FLIGHT_LOG_DIR", "/var/lib/yari/flight-logs"))
 FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
+ROS_LAUNCH_CONFIG_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_CONFIG_FILE", "/etc/yari/ros-launch-profiles.json"))
+ROS_LAUNCH_STATE_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_STATE_FILE", "/var/lib/yari/onboarding/ros-launch.json"))
 
 RUNNING = True
 
@@ -632,6 +634,35 @@ def video_status():
     }
 
 
+def default_ros_launch_profiles():
+    return {
+        "profiles": [
+            {"name": "tortoisebot-hardware", "label": "TortoiseBot hardware bringup", "command_configured": True, "enabled": True},
+            {"name": "drone-companion", "label": "PX4/ArduPilot drone companion", "command_configured": False, "enabled": False},
+            {"name": "rover-companion", "label": "PX4/ArduPilot rover companion", "command_configured": False, "enabled": False},
+        ]
+    }
+
+
+def ros_launch_profiles():
+    payload = read_json(ROS_LAUNCH_CONFIG_FILE, default_ros_launch_profiles())
+    profiles = payload.get("profiles", []) if isinstance(payload, dict) else []
+    normalized = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        item = dict(profile)
+        item["command_configured"] = bool(str(item.get("command") or "").strip()) if "command" in item else bool(item.get("command_configured"))
+        item["enabled"] = bool(item.get("enabled", True))
+        normalized.append(item)
+    return normalized
+
+
+def ros_launch_status():
+    state = read_json(ROS_LAUNCH_STATE_FILE, {"active": False})
+    return {"profiles": ros_launch_profiles(), "active": bool(state.get("active")), "state": state, "config_file": str(ROS_LAUNCH_CONFIG_FILE)}
+
+
 def ros_status():
     ros2 = command(["bash", "-lc", "source /opt/ros/humble/setup.bash 2>/dev/null || true; command -v ros2"], timeout=5)
     nodes = command(["bash", "-lc", "source /opt/ros/humble/setup.bash 2>/dev/null || true; ros2 node list"], timeout=8) if ros2["ok"] else {"stdout": "", "stderr": "ros2 command not found"}
@@ -641,6 +672,7 @@ def ros_status():
         "installed": ros2["ok"],
         "nodes": [line for line in nodes["stdout"].splitlines() if line],
         "topics": [line for line in topics["stdout"].splitlines() if line],
+        "launch": ros_launch_status(),
         "recording": read_json(CONFIG_DIR / "ros-recording.json", {"active": False}),
         "errors": [value for value in (nodes.get("stderr"), topics.get("stderr")) if value],
     }

@@ -212,7 +212,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |
 | `GET /api/mavlink/endpoints` | Read MAVLink routing endpoint config. |
 | `POST /api/mavlink/endpoints` | Save serial/UDP/TCP MAVLink endpoints. |
-| `GET /api/ros/status` | ROS 2 installation, node/topic status, launch profiles, MCAP recording state. |
+| `GET /api/ros/status` | ROS 2 installation, node/topic status, launch profiles, launch state, MCAP recording state. |
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
 | `POST /api/ros/recording/start` | Starts `ros2 bag record --storage mcap`; leave topics blank to record all topics. |
 | `POST /api/ros/recording/stop` | Sends SIGINT to the active rosbag process and updates recording state. |
@@ -260,6 +260,6 @@ The current autopilot, MAVLink, ROS, video, and data endpoints are scaffolding. 
 
 - `yari-autopilot-manager`: MAVLink heartbeat, firmware, vehicle type, mode, arm state, GPS, battery, EKF, failsafe.
 - `yari-mavlink-router`: serial/UDP/TCP routing profiles for PX4, ArduPilot, Atlas, Foxglove, and ground stations.
-- `yari-ros`: launch profiles, topic discovery, lifecycle state, rosbag/MCAP recording controls.
+- `yari-ros`: configurable launch profiles, topic discovery, lifecycle state, rosbag/MCAP recording controls.
 - `yari-video`: camera selection, encoding profile, ROS image topic publishing, Foxglove/Atlas streaming.
 - `yari-log-manager`: MCAP, `.ulg`, `.bin`, service log indexing, upload, and download.

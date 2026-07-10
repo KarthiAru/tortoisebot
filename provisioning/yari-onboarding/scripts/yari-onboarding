@@ -45,6 +45,10 @@ MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_m
 ROS_RECORDING_PID_FILE = STATE_DIR / "rosbag-record.pid"
 ROS_RECORDING_LOG_FILE = STATE_DIR / "rosbag-record.log"
 ROS_RECORDING_CONFIG_FILE = Path(os.environ.get("YARI_ROS_RECORDING_CONFIG_FILE", "/etc/yari/ros-recording.json"))
+ROS_LAUNCH_CONFIG_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_CONFIG_FILE", "/etc/yari/ros-launch-profiles.json"))
+ROS_LAUNCH_PID_FILE = STATE_DIR / "ros-launch.pid"
+ROS_LAUNCH_LOG_FILE = STATE_DIR / "ros-launch.log"
+ROS_LAUNCH_STATE_FILE = STATE_DIR / "ros-launch.json"
 VIDEO_CONFIG_FILE = Path(os.environ.get("YARI_VIDEO_CONFIG_FILE", "/etc/yari/video.json"))
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
 FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
@@ -735,17 +739,141 @@ def ros_command(args, timeout=8):
     return command_output(["bash", "-lc", f"source /opt/ros/humble/setup.bash 2>/dev/null || true; {shell_args}"], timeout=timeout)
 
 
+def default_ros_launch_profiles():
+    return {
+        "profiles": [
+            {
+                "name": "tortoisebot-hardware",
+                "label": "TortoiseBot hardware bringup",
+                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=True record_mcap:=False",
+                "cwd": "/home/tortoisebot/tb_ws",
+                "setup": "/home/tortoisebot/tb_ws/install/setup.bash",
+                "enabled": True,
+            },
+            {
+                "name": "drone-companion",
+                "label": "PX4/ArduPilot drone companion",
+                "command": "",
+                "cwd": "/home/tortoisebot",
+                "setup": "/opt/ros/humble/setup.bash",
+                "enabled": False,
+                "message": "Set command in /etc/yari/ros-launch-profiles.json for the target drone stack.",
+            },
+            {
+                "name": "rover-companion",
+                "label": "PX4/ArduPilot rover companion",
+                "command": "",
+                "cwd": "/home/tortoisebot",
+                "setup": "/opt/ros/humble/setup.bash",
+                "enabled": False,
+                "message": "Set command in /etc/yari/ros-launch-profiles.json for the target rover stack.",
+            },
+        ]
+    }
+
+
+def read_ros_launch_profiles():
+    payload = read_json_file(ROS_LAUNCH_CONFIG_FILE, default_ros_launch_profiles())
+    profiles = payload.get("profiles", []) if isinstance(payload, dict) else []
+    normalized = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(profile.get("name") or "")).strip("-")
+        if not name:
+            continue
+        item = dict(profile)
+        item["name"] = name
+        item["enabled"] = bool(item.get("enabled", True))
+        item["command_configured"] = bool(str(item.get("command") or "").strip())
+        normalized.append(item)
+    return {"profiles": normalized, "config_file": str(ROS_LAUNCH_CONFIG_FILE)}
+
+
+def find_ros_launch_profile(name):
+    for profile in read_ros_launch_profiles()["profiles"]:
+        if profile.get("name") == name:
+            return profile
+    raise ValueError(f"unknown ROS launch profile: {name}")
+
+
+def ros_launch_status():
+    state = read_json_file(ROS_LAUNCH_STATE_FILE, {"active": False})
+    pid = None
+    try:
+        pid = int(ROS_LAUNCH_PID_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        pass
+    active = bool(pid and process_running(pid))
+    if state.get("active") and not active:
+        state["active"] = False
+        state["message"] = "launch process is not running"
+    state.update({"active": active, "pid": pid, "log_file": str(ROS_LAUNCH_LOG_FILE)})
+    return state
+
+
+def start_ros_launch_profile(payload):
+    status = ros_launch_status()
+    if status.get("active"):
+        return {"ok": True, "launch": status, "message": "ROS launch profile is already running"}
+    profile_name = str(payload.get("profile") or "")
+    profile = find_ros_launch_profile(profile_name)
+    if not profile.get("enabled", True):
+        return {"ok": False, "profile": profile, "error": "profile is disabled"}
+    command = str(profile.get("command") or "").strip()
+    if not command:
+        return {"ok": False, "profile": profile, "error": "profile command is not configured"}
+    cwd = Path(str(profile.get("cwd") or "/home/tortoisebot"))
+    if not cwd.is_absolute():
+        raise ValueError("profile cwd must be an absolute path")
+    setup = str(profile.get("setup") or "/opt/ros/humble/setup.bash")
+    ROS_LAUNCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    shell_cmd = f"source {sh_quote(setup)} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
+    log_handle = ROS_LAUNCH_LOG_FILE.open("ab")
+    proc = subprocess.Popen(["bash", "-lc", shell_cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    ROS_LAUNCH_PID_FILE.write_text(str(proc.pid) + "\n")
+    state = {"active": True, "pid": proc.pid, "profile": profile_name, "command": command, "cwd": str(cwd), "started": int(time.time())}
+    ROS_LAUNCH_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROS_LAUNCH_STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    os.chmod(ROS_LAUNCH_STATE_FILE, 0o600)
+    return {"ok": True, "launch": ros_launch_status(), "profile": profile}
+
+
+def stop_ros_launch_profile():
+    status = ros_launch_status()
+    pid = status.get("pid")
+    if pid and status.get("active"):
+        try:
+            os.killpg(int(pid), signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            os.kill(int(pid), signal.SIGINT)
+        time.sleep(1)
+    ROS_LAUNCH_PID_FILE.unlink(missing_ok=True)
+    status = ros_launch_status()
+    status["active"] = False
+    status["stopped"] = int(time.time())
+    ROS_LAUNCH_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ROS_LAUNCH_STATE_FILE.write_text(json.dumps(status, indent=2) + "\n")
+    os.chmod(ROS_LAUNCH_STATE_FILE, 0o600)
+    return {"ok": True, "launch": status}
+
+
 def ros_status():
     ros2 = command_output(["bash", "-lc", "command -v ros2"], timeout=5)
     nodes = ros_command(["ros2", "node", "list"], timeout=8) if ros2["ok"] else {"ok": False, "stdout": "", "stderr": "ros2 command not found"}
     manager_payload = service_manager_status("ros")
+    launch = ros_launch_status()
+    profiles = read_ros_launch_profiles()
     return {
         "installed": manager_payload.get("installed", ros2["ok"]),
         "ros_distro": os.environ.get("ROS_DISTRO") or "humble",
         "nodes": manager_payload.get("nodes", [line for line in nodes["stdout"].splitlines() if line]),
         "topics": manager_payload.get("topics", []),
         "topics_endpoint": "/api/ros/topics",
-        "launch_profiles": ["tortoisebot-hardware", "drone-companion", "rover-companion"],
+        "launch_profiles": profiles["profiles"],
+        "launch": manager_payload.get("launch", launch),
         "recording": manager_payload.get("recording", ros_recording_status()),
         "error": nodes["stderr"],
         "service": service_status("yari-ros"),
@@ -1308,7 +1436,13 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(200, cleanup_data_logs(payload))
                 return
             if path == "/api/ros/launch-profile":
-                self.send_json(202, {"ok": False, "supported": False, "message": "ROS launch profile switching requires a configured launch profile runner."})
+                action = str(payload.get("action") or "start")
+                if action == "stop":
+                    self.send_json(200, stop_ros_launch_profile())
+                elif action == "start":
+                    self.send_json(200, start_ros_launch_profile(payload))
+                else:
+                    self.send_json(400, {"ok": False, "error": "action must be start or stop"})
                 return
         except Exception as exc:
             self.send_json(500, {"ok": False, "error": str(exc)})

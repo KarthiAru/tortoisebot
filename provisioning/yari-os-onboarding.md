@@ -136,7 +136,7 @@ Next hardening step:
 
 ## Phase 1/2 Implementation Status
 
-This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific firmware upload, production Atlas API contract validation, and full ROS launch orchestration remain future implementation work. ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management with multipart upload transport, MAVLink router config generation/process supervision, optional `pymavlink` heartbeat/status probing, opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues are now implemented in the portal/service layer.
+This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific firmware upload, production Atlas API contract validation, and full ROS launch orchestration remain future implementation work. ROS launch profile start/stop, ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management with multipart upload transport, MAVLink router config generation/process supervision, optional `pymavlink` heartbeat/status probing, opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues are now implemented in the portal/service layer.
 
 Implemented Phase 1 pieces:
 
@@ -154,7 +154,7 @@ Implemented Phase 2 foundation:
 
 - Systemd unit templates for `yari-mavlink-router`, `yari-autopilot-manager`, `yari-log-manager`, `yari-video`, `yari-ros`, and `yari-agent`.
 - Autopilot portal page with serial-device discovery, MAVLink endpoint config, PX4/ArduPilot status placeholders, and firmware-upload placeholder.
-- ROS 2 portal page with ROS presence, node list, topic list, launch profile placeholders, and bag/MCAP recording placeholder endpoints.
+- ROS 2 portal page with ROS presence, node list, topic list, configurable launch profile controls, and bag/MCAP recording controls.
 - Video portal page with camera/media device discovery and stream profile placeholders.
 - Data portal page with MCAP log discovery, flight-log discovery, upload queue placeholder, and cleanup placeholder.
 
@@ -163,7 +163,7 @@ Remaining Phase 2 implementation work:
 - Replace placeholder systemd services with real service binaries/scripts.
 - Implement MAVLink heartbeat parsing, PX4/ArduPilot detection, mode, arming state, GPS, battery, EKF, failsafe, and firmware metadata.
 - Implement MAVLink router config generation and live reload.
-- Implement ROS launch profile management and MCAP start/stop controls.
+- Validate ROS launch profiles against hardware-specific drone/rover stacks and add richer lifecycle health checks.
 - Implement camera preview/stream controls for RTSP, WebRTC, and Foxglove-friendly compressed topics.
 - Validate the Atlas upload queue against the production Atlas ingestion API and add resumable/streaming uploads for large logs.
 

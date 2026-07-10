@@ -35,6 +35,10 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.ROS_RECORDING_CONFIG_FILE = root / "ros-recording.json"
         self.module.ROS_RECORDING_PID_FILE = root / "ros-record.pid"
         self.module.ROS_RECORDING_LOG_FILE = root / "ros-record.log"
+        self.module.ROS_LAUNCH_CONFIG_FILE = root / "ros-launch-profiles.json"
+        self.module.ROS_LAUNCH_PID_FILE = root / "ros-launch.pid"
+        self.module.ROS_LAUNCH_LOG_FILE = root / "ros-launch.log"
+        self.module.ROS_LAUNCH_STATE_FILE = root / "ros-launch.json"
         self.module.MCAP_DIR = root / "mcap"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
@@ -151,6 +155,24 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(status["nodes"], ["/camera"])
         self.assertTrue(status["recording"]["active"])
         self.assertIn("/scan [sensor_msgs/msg/LaserScan]", status["topics"])
+
+
+    def test_ros_launch_profiles_are_configurable(self):
+        self.module.ROS_LAUNCH_CONFIG_FILE.write_text('{"profiles": [{"name": "drone companion", "command": "ros2 launch demo demo.launch.py", "enabled": true}]}')
+        profiles = self.module.read_ros_launch_profiles()
+        self.assertEqual(profiles["profiles"][0]["name"], "drone-companion")
+        self.assertTrue(profiles["profiles"][0]["command_configured"])
+
+    def test_ros_launch_profile_requires_configured_command(self):
+        self.module.ROS_LAUNCH_CONFIG_FILE.write_text('{"profiles": [{"name": "drone-companion", "command": "", "enabled": true}]}')
+        result = self.module.start_ros_launch_profile({"profile": "drone-companion"})
+        self.assertFalse(result["ok"])
+        self.assertIn("command", result["error"])
+
+    def test_ros_launch_profile_rejects_relative_cwd(self):
+        self.module.ROS_LAUNCH_CONFIG_FILE.write_text('{"profiles": [{"name": "bad", "command": "echo ok", "cwd": "relative", "enabled": true}]}')
+        with self.assertRaises(ValueError):
+            self.module.start_ros_launch_profile({"profile": "bad"})
 
 
     def test_save_video_settings_validates_and_persists(self):
