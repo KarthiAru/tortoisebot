@@ -295,7 +295,7 @@
     <section id="data">
       <div class="grid">
         <div class="card"><h2>MCAP and Flight Logs</h2><pre id="data-status">Loading...</pre></div>
-        <div class="card"><h2>Upload and Cleanup</h2><div class="row"><button class="secondary" id="data-cleanup-preview" type="button">Preview cleanup</button><button class="danger" id="data-cleanup-confirm" type="button">Delete listed logs</button></div><pre id="data-upload">Loading...</pre></div>
+        <div class="card"><h2>Upload and Cleanup</h2><div class="row"><button id="data-upload-enqueue" type="button">Queue uploads</button><button class="secondary" id="data-upload-retry" type="button">Retry queue</button><button class="secondary" id="data-upload-clear" type="button">Clear completed</button><button class="secondary" id="data-cleanup-preview" type="button">Preview cleanup</button><button class="danger" id="data-cleanup-confirm" type="button">Delete listed logs</button></div><pre id="data-upload">Loading...</pre></div>
       </div>
     </section>
   </main>
@@ -434,6 +434,9 @@
       setPre('#video-settings', await post('/api/video/settings', body));
       await refreshVideo();
     });
+    $('#data-upload-enqueue').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/enqueue', {})); await refreshData(); });
+    $('#data-upload-retry').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/retry', {})); await refreshData(); });
+    $('#data-upload-clear').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/uploads/clear', { keep_failed: true })); await refreshData(); });
     $('#data-cleanup-preview').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/cleanup', { confirm: false })); });
     $('#data-cleanup-confirm').addEventListener('click', async () => { setPre('#data-upload', await post('/api/data/cleanup', { confirm: true })); await refreshData(); });
     setTheme(document.documentElement.dataset.theme || 'dark');

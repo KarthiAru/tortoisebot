@@ -217,6 +217,9 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, persisted stream settings. |
 | `POST /api/video/settings` | Saves FPS, encoding, and bandwidth settings for video service profiles. |
 | `GET /api/data/status` | MCAP files, PX4/ArduPilot flight logs, upload queue and storage cleanup status. |
+| `POST /api/data/uploads/enqueue` | Adds selected discovered MCAP/flight logs to the local Atlas upload queue. |
+| `POST /api/data/uploads/retry` | Requeues failed/uploaded/missing upload items. |
+| `POST /api/data/uploads/clear` | Clears completed upload queue items, keeping failed items by default. |
 | `POST /api/data/cleanup` | Previews or deletes selected discovered MCAP/flight log files when `confirm` is true. |
 
 ## Allowed Services

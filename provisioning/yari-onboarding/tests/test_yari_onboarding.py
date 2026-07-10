@@ -36,6 +36,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.ROS_RECORDING_PID_FILE = root / "ros-record.pid"
         self.module.ROS_RECORDING_LOG_FILE = root / "ros-record.log"
         self.module.MCAP_DIR = root / "mcap"
+        self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
@@ -159,6 +160,25 @@ class YariOnboardingTests(unittest.TestCase):
         result = self.module.cleanup_data_logs({"paths": [str(log)], "confirm": True})
         self.assertFalse(result["dry_run"])
         self.assertFalse(log.exists())
+
+
+    def test_upload_queue_enqueue_retry_and_clear(self):
+        self.module.MCAP_DIR.mkdir(parents=True, exist_ok=True)
+        log = self.module.MCAP_DIR / "upload.mcap"
+        log.write_text("bag")
+        result = self.module.enqueue_uploads({"paths": [str(log)]})
+        self.assertEqual(len(result["added"]), 1)
+        self.assertEqual(result["added"][0]["status"], "queued")
+        item = result["added"][0]
+        item["status"] = "failed"
+        self.module.write_upload_queue([item])
+        retry = self.module.retry_uploads({})
+        self.assertEqual(retry["queue"]["items"][0]["status"], "queued")
+        item = retry["queue"]["items"][0]
+        item["status"] = "uploaded"
+        self.module.write_upload_queue([item])
+        cleared = self.module.clear_upload_queue({"keep_failed": True})
+        self.assertEqual(cleared["queue"]["items"], [])
 
     def test_support_bundle_contains_status_files(self):
         bundle = self.module.support_bundle()

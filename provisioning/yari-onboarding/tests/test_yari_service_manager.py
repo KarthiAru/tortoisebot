@@ -26,6 +26,7 @@ class YariServiceManagerTests(unittest.TestCase):
         self.module.RUNTIME_DIR = root / "run"
         self.module.CONFIG_DIR = root / "config"
         self.module.MAVLINK_CONFIG_FILE = root / "mavlink.json"
+        self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
 
     def test_write_mavlink_router_config_maps_serial_and_udp_endpoints(self):
         config = self.module.write_mavlink_router_config([
@@ -47,6 +48,12 @@ class YariServiceManagerTests(unittest.TestCase):
         self.assertFalse(status["router_process"]["running"])
         self.assertIn("not installed", status["router_process"]["error"])
         self.assertTrue(Path(status["router_config"]).exists())
+
+    def test_upload_queue_summary_marks_missing_queued_files(self):
+        self.module.UPLOAD_QUEUE_FILE.write_text('{"items":[{"id":"one","path":"/tmp/definitely-missing-yari-log.mcap","status":"queued"}]}')
+        summary = self.module.upload_queue_summary()
+        self.assertEqual(summary["counts"]["missing"], 1)
+        self.assertEqual(summary["items"][0]["status"], "missing")
 
 
 if __name__ == "__main__":

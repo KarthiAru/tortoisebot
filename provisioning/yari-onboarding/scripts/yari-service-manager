@@ -12,6 +12,7 @@ RUNTIME_DIR = Path(os.environ.get("YARI_SERVICE_RUNTIME_DIR", "/run/yari"))
 CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
+UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
 
 RUNNING = True
 
@@ -140,6 +141,42 @@ def autopilot_manager_status():
     }
 
 
+
+
+def read_upload_queue():
+    payload = read_json(UPLOAD_QUEUE_FILE, {"items": []})
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    normalized = []
+    changed = False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = Path(str(item.get("path", "")))
+        if item.get("status") in {"queued", "uploading"} and item.get("path") and not path.exists():
+            item = dict(item)
+            item["status"] = "missing"
+            item["updated"] = int(time.time())
+            changed = True
+        normalized.append(item)
+    if changed:
+        write_upload_queue(normalized)
+    return normalized
+
+
+def write_upload_queue(items):
+    UPLOAD_QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    UPLOAD_QUEUE_FILE.write_text(json.dumps({"items": items, "updated": int(time.time())}, indent=2) + "\n")
+    os.chmod(UPLOAD_QUEUE_FILE, 0o600)
+
+
+def upload_queue_summary():
+    items = read_upload_queue()
+    counts = {}
+    for item in items:
+        status = item.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return {"items": items, "counts": counts, "queue_file": str(UPLOAD_QUEUE_FILE)}
+
 def log_manager_status():
     mcap_logs = []
     if MCAP_DIR.exists():
@@ -151,7 +188,7 @@ def log_manager_status():
         "mcap_dir": str(MCAP_DIR),
         "mcap_logs": mcap_logs,
         "flight_logs": glob_paths(["/var/log/*/*.ulg", "/var/log/*.ulg", "/home/*/**/*.ulg", "/home/*/**/*.BIN", "/home/*/**/*.bin"], 100),
-        "upload_queue": [],
+        "upload_queue": upload_queue_summary(),
     }
 
 
@@ -190,7 +227,7 @@ def agent_status():
         "atlas_url": config.get("atlas_url"),
         "atlas_token_configured": bool(secrets.get("atlas_token")),
         "foxglove_token_configured": bool(secrets.get("foxglove_token")),
-        "upload_queue": [],
+        "upload_queue": upload_queue_summary(),
     }
 
 

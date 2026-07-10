@@ -136,7 +136,7 @@ Next hardening step:
 
 ## Phase 1/2 Implementation Status
 
-This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific MAVLink parsing, video streaming, ROS launch orchestration, firmware upload, and Atlas upload workers remain future implementation work. ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, and MAVLink router config generation/process supervision are now implemented in the portal/service layer.
+This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific MAVLink parsing, video streaming, ROS launch orchestration, firmware upload, and Atlas upload workers remain future implementation work. ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management, and MAVLink router config generation/process supervision are now implemented in the portal/service layer.
 
 Implemented Phase 1 pieces:
 
