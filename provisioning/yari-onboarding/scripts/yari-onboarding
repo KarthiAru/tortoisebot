@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ DEVICE_CONFIG_DIR = Path(os.environ.get("YARI_DEVICE_CONFIG_DIR", "/etc/yari"))
 NETPLAN_DIR = Path(os.environ.get("YARI_ONBOARDING_NETPLAN_DIR", "/etc/netplan"))
 CLOUD_CFG_DIR = Path(os.environ.get("YARI_ONBOARDING_CLOUD_CFG_DIR", "/etc/cloud/cloud.cfg.d"))
 HOSTNAME_FILE = Path(os.environ.get("YARI_ONBOARDING_HOSTNAME_FILE", "/etc/hostname"))
+NM_CONNECTION_DIR = Path(os.environ.get("YARI_ONBOARDING_NM_CONNECTION_DIR", "/etc/NetworkManager/system-connections"))
 APPLY_NETWORK = os.environ.get("YARI_ONBOARDING_APPLY_NETWORK", "1") not in {"0", "false", "False"}
 AP_IFACE = os.environ.get("YARI_ONBOARDING_WIFI_IFACE", "wlan0")
 AP_ADDR = os.environ.get("YARI_ONBOARDING_AP_ADDR", "192.168.4.1")
@@ -105,9 +107,46 @@ def ensure_ap():
     ensure_ap_wpa_supplicant()
 
 
+def nm_connection_names():
+    result = run(["nmcli", "-t", "-f", "NAME", "connection", "show"], capture=True)
+    if result.returncode != 0:
+        return []
+    return result.stdout.splitlines()
+
+
+def try_saved_networkmanager_wifi(timeout=25):
+    if not has_command("nmcli") or "yari-wifi" not in nm_connection_names():
+        return False
+    run(["nmcli", "connection", "down", "yari-setup-ap"], capture=True)
+    result = run(["nmcli", "connection", "up", "yari-wifi"], capture=True)
+    if result.returncode != 0:
+        write_state(current_state({
+            "mode": "client-failed",
+            "configured_ssid": read_configured_ssid(),
+            "error": (result.stderr or result.stdout).strip(),
+        }))
+        return False
+    if wait_for_connectivity(timeout):
+        write_state(current_state({"mode": "client", "message": "connected using saved yari-wifi profile"}))
+        return True
+    write_state(current_state({
+        "mode": "client-failed",
+        "configured_ssid": read_configured_ssid(),
+        "error": "saved yari-wifi profile activated but no network connectivity was detected",
+    }))
+    return False
+
+
+def read_configured_ssid():
+    if not has_command("nmcli"):
+        return ""
+    result = run(["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", "yari-wifi"], capture=True)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def ensure_ap_networkmanager():
     ssid = ap_ssid()
-    existing = run(["nmcli", "-t", "-f", "NAME", "connection", "show"], capture=True).stdout.splitlines()
+    existing = nm_connection_names()
     if "yari-setup-ap" in existing:
         run(["nmcli", "connection", "delete", "yari-setup-ap"], capture=True)
     run(["nmcli", "connection", "add", "type", "wifi", "ifname", AP_IFACE, "con-name", "yari-setup-ap", "autoconnect", "no", "ssid", ssid], check=True)
@@ -172,6 +211,55 @@ def ensure_ap_wpa_supplicant():
     write_state(current_state({"mode": "setup-ap", "ap_backend": "wpa_supplicant-networkd", "ap_security": security}))
 
 
+def normalize_form_value(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def nm_keyfile_value(value):
+    if "\n" in value or "\r" in value:
+        raise ValueError("Wi-Fi values cannot contain newlines")
+    return value.replace("\\", "\\\\").replace(";", "\\;")
+
+
+def write_networkmanager_wifi(ssid, password):
+    NM_CONNECTION_DIR.mkdir(parents=True, exist_ok=True)
+    run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
+    connection = NM_CONNECTION_DIR / "yari-wifi.nmconnection"
+    content = "\n".join([
+        "[connection]",
+        "id=yari-wifi",
+        f"uuid={uuid.uuid4()}",
+        "type=wifi",
+        f"interface-name={AP_IFACE}",
+        "autoconnect=true",
+        "autoconnect-priority=100",
+        "",
+        "[wifi]",
+        "mode=infrastructure",
+        f"ssid={nm_keyfile_value(ssid)}",
+        "",
+        "[wifi-security]",
+        "key-mgmt=wpa-psk",
+        f"psk={nm_keyfile_value(password)}",
+        "",
+        "[ipv4]",
+        "method=auto",
+        "",
+        "[ipv6]",
+        "method=ignore",
+        "",
+        "[proxy]",
+        "",
+    ])
+    connection.write_text(content)
+    os.chown(connection, 0, 0)
+    os.chmod(connection, 0o600)
+    run(["nmcli", "connection", "reload"], check=True)
+
+
 def write_netplan(ssid, password):
     netplan = NETPLAN_DIR / "01-yari-wifi.yaml"
     netplan.parent.mkdir(parents=True, exist_ok=True)
@@ -201,6 +289,8 @@ def write_netplan(ssid, password):
 
 
 def configure_wifi(ssid, password, hostname=""):
+    ssid = normalize_form_value(ssid)
+    password = normalize_form_value(password)
     if not ssid or not password:
         raise ValueError("ssid and password are required")
     if hostname:
@@ -211,9 +301,7 @@ def configure_wifi(ssid, password, hostname=""):
             if APPLY_NETWORK:
                 run(["hostnamectl", "set-hostname", safe_hostname], capture=True)
     if has_command("nmcli") and APPLY_NETWORK:
-        run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
-        run(["nmcli", "connection", "add", "type", "wifi", "ifname", AP_IFACE, "con-name", "yari-wifi", "ssid", ssid], check=True)
-        run(["nmcli", "connection", "modify", "yari-wifi", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password, "connection.autoconnect", "yes"], check=True)
+        write_networkmanager_wifi(ssid, password)
     else:
         write_netplan(ssid, password)
         if APPLY_NETWORK:
