@@ -20,10 +20,10 @@ This implementation is the first YARI OS core portal slice:
 Preferred runtime dependency:
 
 ```bash
-sudo apt-get install -y network-manager
+sudo apt-get install -y network-manager avahi-daemon libnss-mdns
 ```
 
-NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Jetson Orin, mini PCs, and other Ubuntu edge devices. On Ubuntu Server images without NetworkManager, the service falls back to `wpa_supplicant` AP mode and `systemd-networkd` DHCP when those tools are available.
+NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Jetson Orin, mini PCs, and other Ubuntu edge devices. Avahi and `libnss-mdns` provide the advertised `http://<hostname>.local` portal address on typical LANs. On Ubuntu Server images without NetworkManager, the service falls back to `wpa_supplicant` AP mode and `systemd-networkd` DHCP when those tools are available.
 
 ## Installed Files
 

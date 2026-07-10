@@ -140,7 +140,7 @@ This repo now contains the first implementation slice for Phase 1 and Phase 2. T
 
 Implemented Phase 1 pieces:
 
-- Persistent local portal served by `yari-onboarding.service` after normal Wi-Fi join and during setup AP mode.
+- Persistent local portal served by `yari-onboarding.service` after normal Wi-Fi join and during setup AP mode, with Avahi/mDNS support for `http://<hostname>.local`.
 - NetworkManager-first Wi-Fi save path writing `/etc/NetworkManager/system-connections/yari-wifi.nmconnection`.
 - Reboot-after-save behavior for single-radio devices.
 - Setup fields for Wi-Fi scan, password, hostname, SSH key/password, Atlas token, and Foxglove token.

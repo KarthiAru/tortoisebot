@@ -28,6 +28,8 @@ apt-get install -y \
   cmake \
   git \
   network-manager \
+  avahi-daemon \
+  libnss-mdns \
   python3-ament-package \
   python3-colcon-common-extensions \
   python3-opencv \
@@ -58,6 +60,11 @@ apt-get install -y \
   ros-humble-camera-ros \
   ros-humble-v4l2-camera \
   ros-humble-image-transport-plugins
+
+configure_mdns() {
+  systemctl enable avahi-daemon.service || true
+  systemctl restart avahi-daemon.service || true
+}
 
 configure_network_manager() {
   install -d /etc/netplan
@@ -104,6 +111,7 @@ NETPLAN
   netplan generate
 }
 
+configure_mdns
 configure_network_manager
 
 pip3 install adafruit-blinka adafruit-circuitpython-bno055
