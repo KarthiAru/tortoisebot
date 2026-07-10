@@ -44,6 +44,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.HOSTNAME_FILE = root / "hostname"
+        self.module.DEVICE_MODEL_PATHS = [root / "device-model"]
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
         self.module.APPLY_NETWORK = False
@@ -147,6 +148,11 @@ class YariOnboardingTests(unittest.TestCase):
         status = self.module.network_status()
         self.assertIn("static_ip", status["config"])
         self.assertIn("lte", status["config"])
+
+    def test_device_status_includes_hardware_model(self):
+        self.module.DEVICE_MODEL_PATHS[0].write_text("Raspberry Pi 5 Model B\x00")
+        status = self.module.device_status()
+        self.assertEqual(status["device_model"], "Raspberry Pi 5 Model B")
 
 
     def test_autopilot_status_uses_manager_heartbeat_file(self):

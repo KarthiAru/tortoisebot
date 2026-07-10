@@ -129,22 +129,22 @@ MVP implemented in this repo:
 Next hardening step:
 
 1. Test AP mode on Raspberry Pi and Jetson hardware.
-2. Add a Wi-Fi scan endpoint and SSID picker to the UI.
-3. Add per-device AP passwords or a physical-access setup token.
-4. Add factory-reset/maintenance-mode controls.
+2. Add per-device AP passwords or a physical-access setup token.
+3. Add captive-portal DNS redirect behavior for phones and tablets.
+4. Harden factory-reset/maintenance-mode controls with physical-access confirmation.
 
 
 ## Phase 1/2 Implementation Status
 
-This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. Hardware-specific firmware upload, production Atlas API contract validation, and full ROS launch orchestration remain future implementation work. ROS launch profile start/stop, ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management with multipart upload transport, agent telemetry and remote-access readiness reporting, MAVLink router config generation/process supervision, optional `pymavlink` heartbeat/status probing, opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues are now implemented in the portal/service layer.
+This repo now contains the first implementation slice for Phase 1 and Phase 2. The Phase 2 services now have a shared `yari-service-manager` heartbeat/status entrypoint, so systemd services can publish concrete local state for MAVLink endpoints, autopilot detection, ROS nodes/topics, camera discovery, logs, and pairing tokens. The portal/service layer now implements ROS launch profile start/stop, ROS MCAP recording start/stop, video settings persistence, guarded log cleanup, local Atlas upload queue management with multipart upload transport, agent telemetry and remote-access readiness reporting, MAVLink router config generation/process supervision, optional `pymavlink` heartbeat/status probing, opt-in ffmpeg RTSP stream supervision, and MAVLink LOG listing/download queues. Remaining work is production validation and hardening against real PX4/ArduPilot hardware, Atlas ingestion, and hardware-specific launch profiles.
 
 Implemented Phase 1 pieces:
 
 - Persistent local portal served by `yari-onboarding.service` after normal Wi-Fi join and during setup AP mode.
 - NetworkManager-first Wi-Fi save path writing `/etc/NetworkManager/system-connections/yari-wifi.nmconnection`.
 - Reboot-after-save behavior for single-radio devices.
-- Setup fields for Wi-Fi, hostname, SSH key/password, Atlas token, and Foxglove token.
-- Device status with OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, and onboarding state.
+- Setup fields for Wi-Fi scan, password, hostname, SSH key/password, Atlas token, and Foxglove token.
+- Device status with hardware model, OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, and onboarding state.
 - Network status with active connections, interfaces, AP/client state, DNS, static-IP placeholder, Ethernet, and LTE placeholder.
 - Allowlisted service start/stop/restart/enable/disable/logs for YARI-managed services only.
 - Logs page with onboarding, system journal, ROS log, MAVLink log views, and downloadable support bundle endpoint.
@@ -158,12 +158,12 @@ Implemented Phase 2 foundation:
 - Video portal page with camera/media device discovery, local JPEG preview, RTSP stream settings, and Foxglove/Atlas stream target metadata.
 - Data portal page with MCAP log discovery, flight-log discovery, upload queue status, and guarded cleanup controls.
 
-Remaining Phase 2 implementation work:
+Production validation and hardening still required:
 
 - Validate MAVLink heartbeat/status parsing against real PX4 and ArduPilot hardware, including EKF, failsafe, and firmware metadata coverage.
-- Implement MAVLink router config generation and live reload.
+- Validate MAVLink router config generation and live reload on target autopilot links.
 - Validate ROS launch profiles against hardware-specific drone/rover stacks and add richer lifecycle health checks.
-- Implement camera preview/stream controls for RTSP, Atlas WebRTC readiness, and Foxglove-friendly compressed topics.
+- Validate camera preview/stream controls for RTSP, Atlas WebRTC readiness, and Foxglove-friendly compressed topics on Pi, Jetson, and USB/CSI camera combinations.
 - Validate the Atlas upload queue against the production Atlas ingestion API and add resumable/streaming uploads for large logs.
 
 ## Recovery Commands

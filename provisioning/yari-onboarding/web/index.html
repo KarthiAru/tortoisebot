@@ -198,6 +198,11 @@
           </form>
         </div>
         <div class="card">
+          <h2>Wi-Fi Networks</h2>
+          <div class="row"><button id="setup-scan-wifi" type="button">Scan</button></div>
+          <div id="setup-wifi-list"></div>
+        </div>
+        <div class="card">
           <h2>Current State</h2>
           <pre id="setup-state">Loading...</pre>
         </div>
@@ -334,7 +339,7 @@
         <span class="pill ${data.ip_addresses?.length ? 'ok' : 'warn'}">${escapeHtml((data.ip_addresses || []).join(' ') || 'no IP')}</span>
         <span class="pill">${escapeHtml(data.onboarding?.mode || 'unknown')}</span>`;
       setPre('#setup-state', { onboarding: data.onboarding, setup });
-      setPre('#device-status', { hostname: data.hostname, device_id: data.device_id, os_release: data.os_release, kernel: data.kernel, architecture: data.architecture, cpu_count: data.cpu_count, uptime: data.uptime, load_average: data.load_average, memory: data.memory, temperature_c: data.temperature_c, ip_addresses: data.ip_addresses });
+      setPre('#device-status', { hostname: data.hostname, device_id: data.device_id, device_model: data.device_model, os_release: data.os_release, kernel: data.kernel, architecture: data.architecture, cpu_count: data.cpu_count, uptime: data.uptime, load_average: data.load_average, memory: data.memory, temperature_c: data.temperature_c, ip_addresses: data.ip_addresses });
       setPre('#storage-status', data.storage);
     }
     async function refreshNetwork() {
@@ -342,10 +347,13 @@
       setPre('#network-status', data);
       setPre('#network-features', data.config || {});
     }
-    async function refreshWifiScan() {
-      const data = await api('/api/network/wifi/scan');
-      const rows = data.networks.map((n) => `<tr><td>${escapeHtml(n.ssid)}</td><td>${escapeHtml(n.signal)}</td><td>${escapeHtml(n.security || 'open')}</td><td>${escapeHtml(n.channel)}</td></tr>`).join('');
-      $('#wifi-list').innerHTML = `<table><thead><tr><th>SSID</th><th>Signal</th><th>Security</th><th>Ch</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No networks found</td></tr>'}</tbody></table>`;
+    function renderWifiList(selector, data) {
+      const rows = (data.networks || []).map((n) => `<tr><td>${escapeHtml(n.ssid)}</td><td>${escapeHtml(n.signal)}</td><td>${escapeHtml(n.security || 'open')}</td><td>${escapeHtml(n.channel)}</td></tr>`).join('');
+      const error = data.ok === false && data.error ? `<p class="bad">${escapeHtml(data.error)}</p>` : '';
+      $(selector).innerHTML = `${error}<table><thead><tr><th>SSID</th><th>Signal</th><th>Security</th><th>Ch</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No networks found</td></tr>'}</tbody></table>`;
+    }
+    async function refreshWifiScan(selector = '#wifi-list') {
+      renderWifiList(selector, await api('/api/network/wifi/scan'));
     }
     async function refreshServices() {
       const data = await api('/api/services');
@@ -413,7 +421,8 @@
       $(`#${button.dataset.tab}`).classList.add('active');
     }));
     $('#refresh-all').addEventListener('click', refreshAll);
-    $('#scan-wifi').addEventListener('click', refreshWifiScan);
+    $('#scan-wifi').addEventListener('click', () => refreshWifiScan('#wifi-list'));
+    $('#setup-scan-wifi').addEventListener('click', () => refreshWifiScan('#setup-wifi-list'));
     $('#enable-ap').addEventListener('click', async () => { setPre('#network-status', await post('/api/network/ap/enable')); });
     $('#setup-form').addEventListener('submit', async (event) => {
       event.preventDefault();

@@ -37,6 +37,12 @@ AP_PASSWORD = os.environ.get("YARI_ONBOARDING_AP_PASSWORD", "")
 CONNECTIVITY_TIMEOUT = int(os.environ.get("YARI_ONBOARDING_CONNECTIVITY_TIMEOUT", "45"))
 HTTP_PORT = int(os.environ.get("YARI_ONBOARDING_HTTP_PORT", "80"))
 REBOOT_AFTER_SAVE = os.environ.get("YARI_ONBOARDING_REBOOT_AFTER_SAVE", "1") not in {"0", "false", "False"}
+DEVICE_MODEL_PATHS = [
+    Path("/proc/device-tree/model"),
+    Path("/sys/firmware/devicetree/base/model"),
+    Path("/sys/class/dmi/id/product_name"),
+    Path("/sys/class/dmi/id/board_name"),
+]
 MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari/mavlink-endpoints.json"))
 PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
 PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
@@ -141,6 +147,14 @@ def read_text_file(path):
         return Path(path).read_text().strip()
     except (FileNotFoundError, PermissionError, OSError):
         return ""
+
+
+def device_model():
+    for path in DEVICE_MODEL_PATHS:
+        value = read_text_file(path).replace("\x00", "").strip()
+        if value:
+            return value
+    return "unknown"
 
 
 def write_json_secret(path, payload):
@@ -552,6 +566,7 @@ def device_status():
         temperature_c = round(int(temp) / 1000, 1)
     return {
         "device_id": device_id(),
+        "device_model": device_model(),
         "hostname": socket.gethostname(),
         "os_release": read_text_file("/etc/os-release"),
         "kernel": command_output(["uname", "-r"])["stdout"],
