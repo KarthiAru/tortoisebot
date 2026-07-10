@@ -29,7 +29,6 @@ NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Je
 
 ```text
 /usr/local/sbin/yari-onboarding
-/usr/local/sbin/yari-service-placeholder
 /usr/local/sbin/yari-service-manager
 /etc/systemd/system/yari-onboarding.service
 /etc/systemd/system/yari-agent.service
@@ -186,7 +185,7 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 
 `yari-mavlink-router.service` uses `mavlink-routerd` when installed. If the binary is missing, the service still writes status and generated config so the portal can show the exact missing dependency instead of silently failing. `yari-autopilot-manager.service` uses optional `pymavlink` to probe enabled MAVLink endpoints for heartbeat, PX4/ArduPilot stack identity, mode, armed state, battery, GPS, and version messages; without `pymavlink`, the portal reports the dependency gap explicitly. `yari-video.service` uses optional `ffmpeg` to push a configured `/dev/video*` stream to an RTSP URL when `stream_enabled` is true and the portal can capture an on-demand JPEG preview at `/api/video/snapshot`; without `ffmpeg` or a camera device, the portal reports the exact stream/preview state. `yari-log-manager.service` uses optional `pymavlink` MAVLink LOG messages to list remote PX4/ArduPilot logs and process queued log-download requests into `/var/lib/yari/flight-logs`.
 
-`yari-agent.service` publishes lightweight device telemetry, Atlas/Foxglove remote-access readiness, and processes the local upload queue at `/var/lib/yari/upload-queue.json`. The Data page can enqueue discovered MCAP and flight-log files, retry failed items, and clear completed items. Uploads require an Atlas device token saved through the Setup page. By default, the agent posts multipart uploads to `<atlas_url>/logs/upload`; set `atlas_upload_url` in `/etc/yari/device-portal.json` or the Setup page when Atlas exposes a different ingestion endpoint. The multipart payload contains a `metadata` JSON field and a binary `file` field, authenticated with `Authorization: Bearer <atlas_token>`.
+`yari-agent.service` publishes lightweight device telemetry, Atlas/Foxglove remote-access readiness, and processes the local upload queue at `/var/lib/yari/upload-queue.json`. All YARI service units installed by this package run concrete `yari-service-manager` roles; the old placeholder service script has been removed. The Data page can enqueue discovered MCAP and flight-log files, retry failed items, and clear completed items. Uploads require an Atlas device token saved through the Setup page. By default, the agent posts multipart uploads to `<atlas_url>/logs/upload`; set `atlas_upload_url` in `/etc/yari/device-portal.json` or the Setup page when Atlas exposes a different ingestion endpoint. The multipart payload contains a `metadata` JSON field and a binary `file` field, authenticated with `Authorization: Bearer <atlas_token>`.
 
 ## API Summary
 
