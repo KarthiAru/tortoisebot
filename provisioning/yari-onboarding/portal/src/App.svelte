@@ -33,6 +33,7 @@
   let services: ServiceList | null = null;
   let logOutput = 'Select a log source.';
   let logsStatus: AnyRecord | null = null;
+  let securityStatus: AnyRecord | null = null;
   let setupState: AnyRecord | null = null;
   let wifiScan: AnyRecord | null = null;
   let autopilot: AnyRecord | null = null;
@@ -201,25 +202,33 @@
     ];
   }
   function portalSecurityItems() {
-    const apiAuth = portalVersion?.api_auth || setupState?.api_auth || {};
-    const apMode = network?.config?.ap_mode || {};
+    const apiAuth = securityStatus?.portal_api || portalVersion?.api_auth || setupState?.api_auth || {};
+    const apMode = securityStatus?.setup_ap || network?.config?.ap_mode || {};
+    const credentialFiles = securityStatus?.credential_files || {};
     const apiProtected = Boolean(apiAuth.protected || portalVersion?.api_token_required);
     const apProtected = apMode.security === 'wpa-psk';
+    const apiSource = apiAuth.source || apiAuth.token_source || 'configured';
+    const apSource = apMode.source || apMode.password_source || 'configured';
+    const generatedFiles = [
+      credentialFiles.portal_api_token?.exists ? 'API token file' : '',
+      credentialFiles.setup_ap?.exists ? 'AP credential file' : '',
+      credentialFiles.portal_secrets?.exists ? 'portal secrets file' : '',
+    ].filter(Boolean);
     return [
       {
         label: 'Portal API',
         state: apiProtected ? 'ok' : 'warn',
-        detail: apiProtected ? `${apiAuth.token_source || 'configured'} token required for changes` : 'mutating APIs are open',
+        detail: apiProtected ? `${apiSource} token required for changes` : 'mutating APIs are open',
       },
       {
         label: 'Setup AP',
         state: apProtected ? 'ok' : 'warn',
-        detail: apProtected ? `${apMode.password_source || 'configured'} setup AP password` : 'setup AP is open',
+        detail: apProtected ? `${apSource} setup AP password` : 'setup AP is open',
       },
       {
         label: 'Secret storage',
-        state: apiProtected || apProtected ? 'ok' : 'warn',
-        detail: [apiAuth.credential_file ? 'API token file' : '', apMode.credential_file ? 'AP credential file' : ''].filter(Boolean).join(', ') || 'no generated credential files',
+        state: generatedFiles.length > 0 ? 'ok' : 'warn',
+        detail: generatedFiles.join(', ') || 'no generated credential files',
       },
     ];
   }
@@ -845,6 +854,9 @@
   async function refreshLogs() {
     logsStatus = await api<AnyRecord>('/api/logs');
   }
+  async function refreshSecurity() {
+    securityStatus = await api<AnyRecord>('/api/security/status');
+  }
 
   async function refreshAutopilot() {
     autopilot = await api<AnyRecord>('/api/autopilot/status');
@@ -920,7 +932,7 @@
     loading = true;
     error = '';
     try {
-      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshAutopilot(), refreshRos(), refreshVideo(), refreshData(), refreshOta(), refreshApps()]);
+      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshSecurity(), refreshAutopilot(), refreshRos(), refreshVideo(), refreshData(), refreshOta(), refreshApps()]);
       resolveInitialTab();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -1474,6 +1486,7 @@
           {/each}
         </div>
         <p>Generated credentials are stored on the device and intentionally hidden from API responses and support bundles.</p>
+        <pre>{pretty(securityStatus)}</pre>
       </div>
       <div class="card">
         <h2>Device Profile</h2>
