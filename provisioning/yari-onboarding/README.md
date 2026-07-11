@@ -75,7 +75,7 @@ Recommended evolution:
 1. Keep the device runtime as static assets served by the local agent.
 2. Use Svelte + TypeScript + Vite + Tailwind CSS for portal source development.
 3. Use Tailwind CSS plus neutral YARI/Atlas design tokens for source development, but compile the result to static files for the device image.
-4. Precompress generated HTML/CSS/JS/JSON/SVG assets with gzip during build/install.
+4. Precompress generated HTML/CSS/JS/JSON/SVG assets with gzip during build/install and serve the `.gz` asset whenever the browser advertises `Accept-Encoding: gzip`.
 5. Share Atlas/YARI design tokens as CSS variables or a small package consumed by Atlas, YARI OS, docs, and device portals.
 6. Build a small YARI OS primitive set mirroring Atlas concepts: Button, IconButton, FormField, TextInput, Select, Tabs, StatusPill, AlertBanner, Dialog/Sheet, Table, and Toast.
 7. Keep privileged operations behind the local backend API, not in browser code.

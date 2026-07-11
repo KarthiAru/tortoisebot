@@ -63,6 +63,24 @@ run_portal_build() {
   fi
 }
 
+validate_portal_dist() {
+  if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
+    echo "Svelte portal build failed: ${PORTAL_DIST}/index.html was not created." >&2
+    return 1
+  fi
+  if [[ ! -f "${PORTAL_DIST}/portal-version.json" || ! -f "${PORTAL_DIST}/portal-assets.json" ]]; then
+    echo "Svelte portal metadata missing. Run npm run build in ${PORTAL_SRC}." >&2
+    return 1
+  fi
+  shopt -s nullglob
+  local portal_gzip_assets=("${PORTAL_DIST}"/*.gz "${PORTAL_DIST}"/assets/*.gz)
+  shopt -u nullglob
+  if (( ${#portal_gzip_assets[@]} == 0 )); then
+    echo "Svelte portal precompressed assets missing. Run npm run build in ${PORTAL_SRC}." >&2
+    return 1
+  fi
+}
+
 if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
   if ! install_node20_build_tools; then
     echo "Svelte portal build is missing and Node.js >= 18/npm are not available." >&2
@@ -73,8 +91,7 @@ if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
   run_portal_build
 fi
 
-if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
-  echo "Svelte portal build failed: ${PORTAL_DIST}/index.html was not created." >&2
+if ! validate_portal_dist; then
   exit 1
 fi
 

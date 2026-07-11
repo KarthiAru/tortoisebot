@@ -490,14 +490,43 @@ def portal_config_status():
 def portal_assets_summary():
     payload = read_json_file(PORTAL_ASSETS_FILE, {})
     assets = payload.get("assets") if isinstance(payload.get("assets"), list) else []
+    asset_bytes_by_path = {
+        str(asset.get("path")): int(asset.get("bytes") or 0)
+        for asset in assets
+        if isinstance(asset, dict) and asset.get("path")
+    }
     gzip_assets = [asset for asset in assets if isinstance(asset, dict) and asset.get("gzip")]
+    gzip_total_bytes = sum(int(asset.get("bytes") or 0) for asset in gzip_assets if isinstance(asset, dict))
+    gzip_original_bytes = 0
+    for asset in gzip_assets:
+        path = str(asset.get("path") or "")
+        if path.endswith(".gz"):
+            gzip_original_bytes += asset_bytes_by_path.get(path[:-3], 0)
+    gzip_savings_bytes = max(0, gzip_original_bytes - gzip_total_bytes)
+    gzip_savings_percent = round((gzip_savings_bytes / gzip_original_bytes) * 100, 1) if gzip_original_bytes else 0.0
+    optimized = bool(payload) and bool(gzip_assets) and gzip_original_bytes > 0
+    if optimized:
+        optimization_state = "optimized"
+        optimization_message = f"{len(gzip_assets)} compressed assets, {gzip_savings_percent}% saved"
+    elif payload:
+        optimization_state = "unoptimized"
+        optimization_message = "asset manifest is present but compressed asset pairs are missing"
+    else:
+        optimization_state = "missing"
+        optimization_message = "asset manifest is missing"
     return {
         "available": bool(payload),
+        "optimized": optimized,
+        "optimization_state": optimization_state,
+        "optimization_message": optimization_message,
         "generated_at": payload.get("generated_at", "unknown"),
         "asset_count": int(payload.get("asset_count") or len(assets)),
         "total_bytes": int(payload.get("total_bytes") or sum(int(asset.get("bytes") or 0) for asset in assets if isinstance(asset, dict))),
         "gzip_asset_count": len(gzip_assets),
-        "gzip_total_bytes": sum(int(asset.get("bytes") or 0) for asset in gzip_assets if isinstance(asset, dict)),
+        "gzip_total_bytes": gzip_total_bytes,
+        "gzip_original_bytes": gzip_original_bytes,
+        "gzip_savings_bytes": gzip_savings_bytes,
+        "gzip_savings_percent": gzip_savings_percent,
         "manifest": str(PORTAL_ASSETS_FILE),
     }
 

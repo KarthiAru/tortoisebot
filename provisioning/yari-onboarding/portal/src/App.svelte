@@ -170,6 +170,25 @@
     return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
   }
 
+  function portalBuildTime() {
+    const value = portalVersion?.build_time;
+    if (!value) return 'unknown';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+  }
+
+  function portalAssetSummaryItems() {
+    const assets = portalVersion?.assets || {};
+    return [
+      { label: 'Assets', value: assets.available ? String(assets.asset_count ?? 0) : 'unavailable' },
+      { label: 'Compressed', value: assets.available ? String(assets.gzip_asset_count ?? 0) : 'unavailable' },
+      { label: 'Raw bytes', value: formatBytes(assets.total_bytes) },
+      { label: 'Gzip bytes', value: formatBytes(assets.gzip_total_bytes) },
+      { label: 'Saved', value: assets.available ? formatBytes(assets.gzip_savings_bytes) + ' / ' + String(assets.gzip_savings_percent ?? 0) + '%' : 'unavailable' },
+      { label: 'Optimization', value: assets.optimization_state || 'unknown' },
+    ];
+  }
+
   function arrayBufferToBase64(buffer: ArrayBuffer) {
     const bytes = new Uint8Array(buffer);
     const chunkSize = 0x8000;
@@ -703,6 +722,8 @@
     const unhealthyApps = installedApps.filter((app: AnyRecord) => ['bad', 'error', 'failed', 'unhealthy'].includes(healthClass(app.health))).length;
     const profile = device?.profile || apps?.device_profile || {};
     const otaReady = Boolean(otaStatus?.mender?.available || otaStatus?.mender_available || otaStatus?.available);
+    const portalAssets = portalVersion?.assets || {};
+    const portalOptimized = Boolean(portalAssets.optimized);
     return [
       {
         label: 'Network',
@@ -715,6 +736,12 @@
         state: serviceItems.length === 0 ? 'warn' : activeServices === serviceItems.length ? 'ok' : 'warn',
         detail: serviceItems.length === 0 ? 'service inventory unavailable' : `${activeServices}/${serviceItems.length} active`,
         tab: 'services' as Tab,
+      },
+      {
+        label: 'Portal',
+        state: portalOptimized ? 'ok' : 'warn',
+        detail: portalAssets.optimization_message || (portalOptimized ? String(portalAssets.gzip_asset_count ?? 0) + ' compressed assets, ' + String(portalAssets.gzip_savings_percent ?? 0) + '% saved' : 'build optimization metadata missing'),
+        tab: 'status' as Tab,
       },
       {
         label: 'Apps',
@@ -1326,6 +1353,20 @@
           <div><dt>Kernel</dt><dd>{device?.kernel || device?.os?.kernel || 'unknown'}</dd></div>
           <div><dt>Portal</dt><dd>{portalVersion?.version || 'dev'} / {portalVersion?.git_commit || 'unknown'}</dd></div>
         </dl>
+      </div>
+      <div class="card">
+        <h2>Portal Build</h2>
+        <dl class="meta-list">
+          <div><dt>Version</dt><dd>{portalVersion?.version || 'dev'}</dd></div>
+          <div><dt>Commit</dt><dd>{portalVersion?.git_commit || 'unknown'}</dd></div>
+          <div><dt>Stack</dt><dd>{portalVersion?.frontend_stack || 'svelte-typescript-vite-tailwind'}</dd></div>
+          <div><dt>Built</dt><dd>{portalBuildTime()}</dd></div>
+        </dl>
+        <div class="summary-grid compact">
+          {#each portalAssetSummaryItems() as item}
+            <div><small>{item.label}</small><strong>{item.value}</strong></div>
+          {/each}
+        </div>
       </div>
       <div class="card">
         <h2>Device Profile</h2>

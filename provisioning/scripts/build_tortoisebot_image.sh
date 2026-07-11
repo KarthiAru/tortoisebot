@@ -535,10 +535,20 @@ if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "tr
   install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/"*.service "${ROOT_MOUNT}/etc/systemd/system/"
   cp -a "${REPO_ROOT}/provisioning/yari-onboarding/apps/." "${ROOT_MOUNT}/opt/yari/onboarding/apps/"
   find "${ROOT_MOUNT}/opt/yari/onboarding/apps" -name '*:Zone.Identifier' -delete || true
-  if [[ ! -f "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/index.html" ]]; then
+  portal_dist="${REPO_ROOT}/provisioning/yari-onboarding/portal/dist"
+  if [[ ! -f "${portal_dist}/index.html" ]]; then
     die "Svelte portal build missing; ensure YARI_PORTAL_BUILD is enabled and Node.js >= 18 plus npm are available."
   fi
-  cp -a "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  if [[ ! -f "${portal_dist}/portal-version.json" || ! -f "${portal_dist}/portal-assets.json" ]]; then
+    die "Svelte portal metadata missing; rerun npm run build in provisioning/yari-onboarding/portal."
+  fi
+  shopt -s nullglob
+  portal_gzip_assets=("${portal_dist}"/*.gz "${portal_dist}"/assets/*.gz)
+  shopt -u nullglob
+  if (( ${#portal_gzip_assets[@]} == 0 )); then
+    die "Svelte portal precompressed assets missing; rerun npm run build in provisioning/yari-onboarding/portal."
+  fi
+  cp -a "${portal_dist}/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
   find "${ROOT_MOUNT}/opt/yari/onboarding/web" -name '*:Zone.Identifier' -delete || true
   cat > "${ROOT_MOUNT}/etc/yari/onboarding.env" <<ONBOARDING_ENV
 YARI_ONBOARDING_WIFI_IFACE=wlan0

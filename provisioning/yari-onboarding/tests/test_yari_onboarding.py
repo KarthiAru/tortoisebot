@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import base64
+import gzip
+import http.client
 import importlib.machinery
 import importlib.util
 import json
 import os
 import tarfile
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -127,7 +130,46 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(version["assets"]["asset_count"], 2)
         self.assertEqual(version["assets"]["gzip_asset_count"], 1)
         self.assertEqual(version["assets"]["gzip_total_bytes"], 20)
+        self.assertEqual(version["assets"]["gzip_original_bytes"], 100)
+        self.assertEqual(version["assets"]["gzip_savings_bytes"], 80)
+        self.assertEqual(version["assets"]["gzip_savings_percent"], 80.0)
         self.assertTrue(version["assets"]["available"])
+        self.assertTrue(version["assets"]["optimized"])
+        self.assertEqual(version["assets"]["optimization_state"], "optimized")
+        self.assertEqual(version["assets"]["optimization_message"], "1 compressed assets, 80.0% saved")
+
+    def test_static_portal_serves_precompressed_assets_when_browser_accepts_gzip(self):
+        body = b"console.log('yari-os');\n"
+        asset = self.module.WEB_DIR / "assets" / "app.js"
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        asset.write_bytes(body)
+        asset.with_suffix(asset.suffix + ".gz").write_bytes(gzip.compress(body, compresslevel=9))
+
+        server = self.module.ThreadingHTTPServer(("127.0.0.1", 0), self.module.Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        self.addCleanup(conn.close)
+        conn.request("GET", "/assets/app.js", headers={"Accept-Encoding": "gzip"})
+        response = conn.getresponse()
+        compressed = response.read()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.getheader("content-encoding"), "gzip")
+        self.assertEqual(response.getheader("vary"), "Accept-Encoding")
+        self.assertIn("javascript", response.getheader("content-type"))
+        self.assertEqual(gzip.decompress(compressed), body)
+
+        conn.request("GET", "/assets/app.js")
+        response = conn.getresponse()
+        raw = response.read()
+
+        self.assertEqual(response.status, 200)
+        self.assertIsNone(response.getheader("content-encoding"))
+        self.assertEqual(raw, body)
 
     def test_nm_keyfile_value_escapes_semicolons_and_rejects_newlines(self):
         self.assertEqual(self.module.nm_keyfile_value("ab;c\\d"), "ab\\;c\\\\d")

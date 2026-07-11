@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install_tortoisebot_humble.sh"
 IMAGE_SCRIPT = REPO_ROOT / "scripts" / "build_tortoisebot_image.sh"
+ONBOARDING_INSTALLER = REPO_ROOT / "yari-onboarding" / "scripts" / "install-yari-onboarding"
 
 
 def apt_install_packages(script_text):
@@ -41,10 +42,23 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertLess(text.index(sentinel_check), text.index(dependency_call))
         self.assertLess(text.index(dependency_call), text.index('touch "\\${REPO_DIR}/YDLidar-SDK/COLCON_IGNORE"'))
 
+    def test_onboarding_installer_requires_optimized_svelte_dist_before_deploy(self):
+        text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("validate_portal_dist", text)
+        self.assertIn("${PORTAL_DIST}/portal-version.json", text)
+        self.assertIn("${PORTAL_DIST}/portal-assets.json", text)
+        self.assertIn("portal_gzip_assets=", text)
+        self.assertIn("precompressed assets missing", text)
+        self.assertLess(text.index("validate_portal_dist"), text.index("cp -a \"${PORTAL_DIST}/.\" /opt/yari/onboarding/web/"))
     def test_image_builder_copies_prebuilt_portal_into_rootfs(self):
         text = IMAGE_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("build_yari_portal", text)
-        self.assertIn("portal/dist/index.html", text)
+        self.assertIn("portal_dist=", text)
+        self.assertIn("${portal_dist}/index.html", text)
+        self.assertIn("${portal_dist}/portal-version.json", text)
+        self.assertIn("${portal_dist}/portal-assets.json", text)
+        self.assertIn("portal_gzip_assets=", text)
+        self.assertIn("precompressed assets missing", text)
         self.assertIn("${ROOT_MOUNT}/opt/yari/onboarding/web/", text)
         self.assertIn("multi-user.target.wants/yari-onboarding.service", text)
 
