@@ -301,11 +301,12 @@ The Maintenance page includes a local migration workflow for moving a device set
 2. Go to Maintenance.
 3. Select Export config.
 4. Save the downloaded `yari-config-<device-id>-<timestamp>.json` file.
-5. On a new or repaired device, use Config Import Dry Run to validate the export before manually re-entering secrets and applying settings.
+5. On a new or repaired device, use Config Import Dry Run to validate the export.
+6. Apply supported non-secret sections from the portal, then manually re-enter secrets such as Wi-Fi passwords and Atlas/Foxglove tokens.
 
-The export is intentionally redacted. It includes device profile, network policy, static network config, OTA policy/state, upload/download queues, app manifests, app/package metadata, portal build metadata, and current status snapshots. It does not include usable Wi-Fi passwords, SSH private material, Atlas tokens, Foxglove tokens, or app environment secrets.
+The export is intentionally redacted. It includes device profile, network policy, static network config, MAVLink endpoints, OTA policy/state, upload/download queues, app manifests, app/package metadata, portal build metadata, and current status snapshots. It does not include usable Wi-Fi passwords, SSH private material, Atlas tokens, Foxglove tokens, or app environment secrets.
 
-Current restore support is deliberately dry-run only. `POST /api/config/import/validate` reports which sections are present, which endpoints would eventually apply them, which sections are restorable now versus future-only, and which secrets must be re-entered. The response includes a `summary` object and a `restore_plan` list so the portal can show an operator-ready migration checklist. Future restore work should keep the same safety model: validate first, apply individual sections explicitly, and never silently restore redacted secrets.
+Restore support is deliberately staged. `POST /api/config/import/validate` reports which sections are present, which endpoints can apply them, which sections are restorable now versus future-only, and which secrets must be re-entered. `POST /api/config/import/apply` requires `acknowledge_apply: true` plus an explicit `apply_sections` list and applies only supported non-secret sections: device profile, network policy, static network config, MAVLink endpoints, and OTA policy. App manifests and all secrets remain review/manual-entry work.
 
 CLI examples:
 
@@ -318,6 +319,11 @@ curl -H "X-YARI-Token: $YARI_PORTAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"export\":$(cat yari-config.json)}" \
   http://tortoisebot.local/api/config/import/validate
+
+curl -H "X-YARI-Token: $YARI_PORTAL_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"export\":$(cat yari-config.json),\"apply_sections\":[\"device_profile\",\"network_policy\",\"mavlink_endpoints\",\"ota_policy\"],\"acknowledge_apply\":true}" \
+  http://tortoisebot.local/api/config/import/apply
 ```
 ## Portal URLs
 
@@ -394,7 +400,8 @@ By default, development images keep the local portal API open on the device LAN/
 | `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |
 | `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with top-level `manifest.json`, status snapshots, sanitized YARI config files, app manifests, logs, redaction policy, and installed portal build metadata. Requires `X-YARI-Token` or bearer authorization when `YARI_PORTAL_API_TOKEN` is configured. |
 | `GET /api/config/export` | Download a redacted `yari-device-config-export` JSON snapshot for SD-card migration, support, or future restore flows. Requires `X-YARI-Token` or bearer authorization when `YARI_PORTAL_API_TOKEN` is configured. |
-| `POST /api/config/import/validate` | Validate a redacted YARI config export without applying changes. Reports present sections, future apply endpoints, restore-plan readiness, missing secrets, warnings, and dry-run status. |
+| `POST /api/config/import/validate` | Validate a redacted YARI config export without applying changes. Reports present sections, apply endpoints, restore-plan readiness, missing secrets, warnings, and dry-run status. |
+| `POST /api/config/import/apply` | Apply explicitly selected supported non-secret sections from a validated YARI config export. Requires `acknowledge_apply: true`; never restores Wi-Fi passwords, SSH secrets, Atlas/Foxglove tokens, app secrets, or app manifests automatically. |
 | `POST /api/reboot` | Reboot the device. |
 | `POST /api/shutdown` | Power off the device. |
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |

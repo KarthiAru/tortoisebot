@@ -3124,6 +3124,7 @@ def support_config_snapshots():
         "device-portal-config.json": sanitize_support_payload(read_json_file(PORTAL_CONFIG_FILE, {})),
         "network-policy.json": read_network_policy(),
         "static-network.json": read_static_ip_config(),
+        "mavlink-endpoints.json": read_mavlink_endpoints(),
         "ota-config.json": read_ota_config(),
         "ota-state.json": read_json_file(OTA_STATE_FILE, {"state": "idle"}),
         "upload-queue.json": sanitize_support_payload(read_upload_queue()),
@@ -3174,7 +3175,7 @@ def config_export():
     })
 
 
-def validate_config_import(payload):
+def config_import_candidate(payload):
     candidate = payload.get("export") if isinstance(payload.get("export"), dict) else payload
     if not isinstance(candidate, dict):
         raise ValueError("config export payload must be a JSON object")
@@ -3182,6 +3183,11 @@ def validate_config_import(payload):
         raise ValueError("config export kind must be yari-device-config-export")
     if str(candidate.get("schema_version") or "") != "1":
         raise ValueError("unsupported config export schema_version")
+    return candidate
+
+
+def validate_config_import(payload):
+    candidate = config_import_candidate(payload)
 
     config = candidate.get("config") if isinstance(candidate.get("config"), dict) else {}
     apps = candidate.get("apps") if isinstance(candidate.get("apps"), dict) else {}
@@ -3246,6 +3252,57 @@ def validate_config_import(payload):
         "warnings": warnings,
         "restore_supported": False,
         "restore_note": candidate.get("restore_note") or "Automatic restore is not enabled yet.",
+    }
+
+
+def apply_config_import(payload):
+    candidate = config_import_candidate(payload)
+    validation = validate_config_import(candidate)
+    if not parse_bool(payload.get("acknowledge_apply")):
+        raise ValueError("acknowledge_apply must be true before applying imported configuration")
+
+    requested = payload.get("apply_sections") or payload.get("sections") or []
+    if isinstance(requested, str):
+        requested = [item for item in re.split(r"[\s,;]+", requested.strip()) if item]
+    if not isinstance(requested, list) or not requested:
+        raise ValueError("apply_sections must name at least one supported section")
+    requested = [str(item).strip() for item in requested if str(item).strip()]
+
+    supported = {section["name"]: section for section in validation["sections"] if section.get("restore_supported")}
+    unsupported = sorted(set(requested) - set(supported.keys()))
+    if unsupported:
+        raise ValueError("unsupported or unavailable import sections: " + ", ".join(unsupported))
+
+    config = candidate.get("config") if isinstance(candidate.get("config"), dict) else {}
+    device = candidate.get("device") if isinstance(candidate.get("device"), dict) else {}
+    profile = device.get("profile") if isinstance(device.get("profile"), dict) else {}
+    applied = []
+    results = {}
+
+    for section in requested:
+        if section == "device_profile":
+            results[section] = save_device_profile(profile)
+        elif section == "network_policy":
+            results[section] = save_network_policy(config.get("network-policy.json", {}))
+        elif section == "static_network":
+            results[section] = save_static_ip_config(config.get("static-network.json", {}))
+        elif section == "mavlink_endpoints":
+            results[section] = {"ok": True, "mavlink": write_mavlink_endpoints(config.get("mavlink-endpoints.json", {}))}
+        elif section == "ota_policy":
+            results[section] = save_ota_config(config.get("ota-config.json", {}))
+        else:
+            raise ValueError(f"section {section} is not supported for import apply")
+        applied.append(section)
+
+    return {
+        "ok": True,
+        "applied": applied,
+        "results": results,
+        "source_device_id": validation.get("source_device_id"),
+        "source_hostname": validation.get("source_hostname"),
+        "warnings": validation.get("warnings", []),
+        "missing_secrets": validation.get("missing_secrets", []),
+        "restore_note": "Applied supported non-secret sections only. Re-enter Wi-Fi credentials, SSH secrets, Atlas/Foxglove tokens, and app secrets separately.",
     }
 
 
@@ -3538,6 +3595,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/config/import/validate":
                 self.send_json(200, validate_config_import(payload))
+                return
+            if path == "/api/config/import/apply":
+                self.send_json(200, apply_config_import(payload))
                 return
             if path == "/api/setup/config":
                 result = save_setup_config(payload)

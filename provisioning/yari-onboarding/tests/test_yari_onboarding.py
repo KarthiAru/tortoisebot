@@ -206,6 +206,50 @@ class YariOnboardingTests(unittest.TestCase):
     def test_config_import_validation_rejects_wrong_kind(self):
         with self.assertRaises(ValueError):
             self.module.validate_config_import({"schema_version": "1", "kind": "not-yari"})
+    def test_config_import_apply_requires_acknowledgement_and_supported_sections(self):
+        export = {
+            "schema_version": "1",
+            "kind": "yari-device-config-export",
+            "device_id": "device-a",
+            "hostname": "yari-a",
+            "redaction": "secrets redacted",
+            "device": {"profile": {"profile_preset": "ros_ground_robot", "vehicle_class": "ground_rover", "autopilot_stack": "ros_only", "compute_target": "raspberry_pi", "ros_domain_id": 7}},
+            "config": {
+                "network-policy.json": {"fallback_ap_enabled": True, "fallback_timeout_sec": 60, "maintenance_ap_enabled": False, "serve_portal_on_client_network": True},
+                "static-network.json": {"enabled": False, "connection_name": "yari-wifi", "address_cidr": "", "gateway": "", "dns": []},
+                "mavlink-endpoints.json": {"endpoints": [{"name": "autopilot", "type": "serial", "device": "/dev/ttyACM0", "baud": 57600, "enabled": True}]},
+                "ota-config.json": {"release_channel": "beta", "auto_check": True, "auto_download": False, "auto_install": False, "require_signed_artifacts": True, "atlas_assignment_url": "https://atlas.example/api/v1/updates/assignment"},
+            },
+            "apps": {"camera-streamer.json": {"id": "camera-streamer"}},
+        }
+
+        with self.assertRaises(ValueError):
+            self.module.apply_config_import({"export": export, "apply_sections": ["device_profile"]})
+        with self.assertRaises(ValueError):
+            self.module.apply_config_import({"export": export, "apply_sections": ["app_manifests"], "acknowledge_apply": True})
+
+        result = self.module.apply_config_import({
+            "export": export,
+            "apply_sections": ["device_profile", "network_policy", "static_network", "mavlink_endpoints", "ota_policy"],
+            "acknowledge_apply": True,
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source_device_id"], "device-a")
+        self.assertEqual(result["applied"], ["device_profile", "network_policy", "static_network", "mavlink_endpoints", "ota_policy"])
+        self.assertIn("App secrets and environment tokens", result["missing_secrets"])
+        self.assertEqual(self.module.read_device_profile()["ros_domain_id"], 7)
+        self.assertEqual(self.module.read_network_policy()["fallback_timeout_sec"], 60)
+        self.assertFalse(self.module.read_static_ip_config()["enabled"])
+        self.assertTrue(self.module.read_mavlink_endpoints()["endpoints"][0]["enabled"])
+        self.assertEqual(self.module.read_ota_config()["release_channel"], "beta")
+        self.assertFalse(self.module.APP_MANIFEST_DIR.exists())
+
+    def test_config_export_includes_mavlink_endpoints_for_migration(self):
+        self.module.write_mavlink_endpoints({"endpoints": [{"name": "udp", "type": "udp", "host": "0.0.0.0", "port": 14550, "enabled": True}]})
+        export = self.module.config_export()
+        self.assertIn("mavlink-endpoints.json", export["config"])
+        self.assertEqual(export["config"]["mavlink-endpoints.json"]["endpoints"][0]["name"], "udp")
 
     def test_static_portal_serves_precompressed_assets_when_browser_accepts_gzip(self):
         body = b"console.log('yari-os');\n"

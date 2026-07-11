@@ -993,6 +993,37 @@
     }
   }
 
+  function supportedConfigImportSections() {
+    const plan = Array.isArray(configImportPreview?.restore_plan) ? configImportPreview.restore_plan : [];
+    return plan.filter((item) => item?.restore_supported).map((item) => String(item.name));
+  }
+
+  async function applyConfigImport() {
+    if (!configImportFile) {
+      setAction({ ok: false, error: 'Choose and validate a YARI config export JSON file first.' });
+      return;
+    }
+    const sections = supportedConfigImportSections();
+    if (sections.length === 0) {
+      setAction({ ok: false, error: 'This export has no supported non-secret sections to apply.' });
+      return;
+    }
+    if (!confirm(`Apply ${sections.length} non-secret config section(s): ${sections.join(', ')}? Secrets and app manifests will not be restored.`)) return;
+    try {
+      const text = await configImportFile.text();
+      const parsed = JSON.parse(text);
+      const result = await post('/api/config/import/apply', { export: parsed, apply_sections: sections, acknowledge_apply: true });
+      setAction(result);
+      configImportPreview = await post('/api/config/import/validate', { export: parsed });
+      await refreshDevice();
+      await refreshNetwork();
+      await refreshAutopilot();
+      await refreshOta();
+    } catch (err) {
+      setAction({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   async function reboot() {
     if (!confirm('Reboot this device now?')) return;
     setAction(await post('/api/reboot'));
@@ -1643,10 +1674,11 @@
 
       <div class="card wide">
         <h2>Config Import Dry Run</h2>
-        <p>Validate a redacted YARI config export before migration. This does not apply settings or restore secrets.</p>
+        <p>Validate a redacted YARI config export before migration. Supported non-secret sections can be applied explicitly; secrets and app manifests are never restored automatically.</p>
         <div class="row">
           <input accept="application/json,.json" type="file" on:change={selectConfigImportFile} />
           <button class="secondary" on:click={validateConfigImport}>Validate export</button>
+          <button class="secondary" disabled={supportedConfigImportSections().length === 0} on:click={applyConfigImport}>Apply supported sections</button>
         </div>
         {#if configImportPreview?.summary}
           <div class="summary-grid compact">
