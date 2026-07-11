@@ -200,6 +200,29 @@
       { label: 'Optimization', value: assets.optimization_state || 'unknown' },
     ];
   }
+  function portalSecurityItems() {
+    const apiAuth = portalVersion?.api_auth || setupState?.api_auth || {};
+    const apMode = network?.config?.ap_mode || {};
+    const apiProtected = Boolean(apiAuth.protected || portalVersion?.api_token_required);
+    const apProtected = apMode.security === 'wpa-psk';
+    return [
+      {
+        label: 'Portal API',
+        state: apiProtected ? 'ok' : 'warn',
+        detail: apiProtected ? `${apiAuth.token_source || 'configured'} token required for changes` : 'mutating APIs are open',
+      },
+      {
+        label: 'Setup AP',
+        state: apProtected ? 'ok' : 'warn',
+        detail: apProtected ? `${apMode.password_source || 'configured'} setup AP password` : 'setup AP is open',
+      },
+      {
+        label: 'Secret storage',
+        state: apiProtected || apProtected ? 'ok' : 'warn',
+        detail: [apiAuth.credential_file ? 'API token file' : '', apMode.credential_file ? 'AP credential file' : ''].filter(Boolean).join(', ') || 'no generated credential files',
+      },
+    ];
+  }
 
   function arrayBufferToBase64(buffer: ArrayBuffer) {
     const bytes = new Uint8Array(buffer);
@@ -1438,6 +1461,19 @@
             <div><small>{item.label}</small><strong>{item.value}</strong></div>
           {/each}
         </div>
+      </div>
+      <div class="card">
+        <h2>Local Access Security</h2>
+        <div class="readiness-grid compact">
+          {#each portalSecurityItems() as item}
+            <div class={`readiness-card ${item.state}`}>
+              <span>{item.label}</span>
+              <strong>{item.state}</strong>
+              <small>{item.detail}</small>
+            </div>
+          {/each}
+        </div>
+        <p>Generated credentials are stored on the device and intentionally hidden from API responses and support bundles.</p>
       </div>
       <div class="card">
         <h2>Device Profile</h2>
