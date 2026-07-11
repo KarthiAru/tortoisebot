@@ -374,10 +374,56 @@ def default_device_profile():
     }
 
 
+DEVICE_PROFILE_PRESETS = [
+    {
+        "id": "tortoisebot_rover",
+        "label": "TortoiseBot rover",
+        "description": "Raspberry Pi ground rover with ROS 2 navigation and MCAP logging.",
+        "values": {"profile_preset": "tortoisebot_rover", "vehicle_class": "ground_rover", "autopilot_stack": "ros_only", "compute_target": "raspberry_pi", "ros_domain_id": 0},
+    },
+    {
+        "id": "ros_ground_robot",
+        "label": "ROS ground robot",
+        "description": "Generic ROS 2 rover using SLAM, Nav2, camera, and lidar services.",
+        "values": {"profile_preset": "ros_ground_robot", "vehicle_class": "ground_rover", "autopilot_stack": "ros_only", "compute_target": "raspberry_pi", "ros_domain_id": 0},
+    },
+    {
+        "id": "px4_companion",
+        "label": "PX4 companion",
+        "description": "PX4 vehicle with companion computer, MAVLink router, video, and logs.",
+        "values": {"profile_preset": "px4_companion", "vehicle_class": "multirotor", "autopilot_stack": "px4", "compute_target": "jetson_orin", "ros_domain_id": 0},
+    },
+    {
+        "id": "ardupilot_companion",
+        "label": "ArduPilot companion",
+        "description": "ArduPilot vehicle with MAVLink, camera streaming, and log download.",
+        "values": {"profile_preset": "ardupilot_companion", "vehicle_class": "multirotor", "autopilot_stack": "ardupilot", "compute_target": "raspberry_pi", "ros_domain_id": 0},
+    },
+    {
+        "id": "generic_edge",
+        "label": "Generic edge",
+        "description": "Ubuntu edge computer for custom ROS 2 or robotics workloads.",
+        "values": {"profile_preset": "generic_edge", "vehicle_class": "generic_edge", "autopilot_stack": "custom", "compute_target": "x86_ubuntu", "ros_domain_id": 0},
+    },
+    {
+        "id": "custom",
+        "label": "Custom",
+        "description": "Manual profile for hardware not covered by the built-in presets.",
+        "values": {"profile_preset": "custom", "vehicle_class": "generic_edge", "autopilot_stack": "custom", "compute_target": "custom", "ros_domain_id": 0},
+    },
+]
+
+PROFILE_PRESET_IDS = {item["id"] for item in DEVICE_PROFILE_PRESETS}
+
+
+def device_profile_presets():
+    return {"presets": DEVICE_PROFILE_PRESETS, "default": default_device_profile()["profile_preset"]}
+
+
 def read_device_profile():
     config = read_json_file(PORTAL_CONFIG_FILE, {})
     profile = {**default_device_profile(), **config.get("device_profile", {})}
-    if profile.get("profile_preset") not in {"tortoisebot_rover", "ros_ground_robot", "px4_companion", "ardupilot_companion", "generic_edge", "custom"}:
+    if profile.get("profile_preset") not in PROFILE_PRESET_IDS:
         profile["profile_preset"] = "custom"
     if profile.get("vehicle_class") not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
         profile["vehicle_class"] = "generic_edge"
@@ -399,8 +445,8 @@ def normalize_device_profile(payload):
     vehicle_class = str(payload.get("vehicle_class") or "ground_rover").strip().lower()
     autopilot_stack = str(payload.get("autopilot_stack") or "none").strip().lower()
     compute_target = str(payload.get("compute_target") or "raspberry_pi").strip().lower()
-    if profile_preset not in {"tortoisebot_rover", "ros_ground_robot", "px4_companion", "ardupilot_companion", "generic_edge", "custom"}:
-        raise ValueError("profile_preset must be one of tortoisebot_rover, ros_ground_robot, px4_companion, ardupilot_companion, generic_edge, custom")
+    if profile_preset not in PROFILE_PRESET_IDS:
+        raise ValueError("profile_preset must be one of " + ", ".join(sorted(PROFILE_PRESET_IDS)))
     if vehicle_class not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
         raise ValueError("vehicle_class must be one of ground_rover, multirotor, fixed_wing, vtol, boat, sub, generic_edge")
     if autopilot_stack not in {"none", "px4", "ardupilot", "ros_only", "custom"}:
@@ -1636,22 +1682,64 @@ def registry_apps_by_id():
     return registry
 
 
+def recommended_app_action(installed=None, registry_app=None):
+    installed_source = installed.get("source", "") if isinstance(installed, dict) else ""
+    if installed and registry_app and installed_source != "builtin" and app_update_metadata(installed, registry_app).get("update_available"):
+        return {"kind": "update", "label": "Apply update", "available": True}
+    if installed:
+        ui = installed.get("ui", {}) if isinstance(installed, dict) else {}
+        if ui.get("path"):
+            return {"kind": "open", "label": "Open UI", "available": True, "path": ui.get("path")}
+        return {"kind": "ready", "label": "Installed", "available": True}
+    if registry_app:
+        actions = registry_app.get("actions", {}) if isinstance(registry_app, dict) else {}
+        return {
+            "kind": "install",
+            "label": "Install manifest",
+            "available": bool(actions.get("apply", True)),
+            "reason": actions.get("reason", ""),
+        }
+    return {"kind": "missing", "label": "Not available", "available": False, "reason": "No installed app or local registry manifest found"}
+
+
+def app_recommendation_preview(profile=None):
+    profile = normalize_device_profile(profile or read_device_profile())
+    apps, _ = raw_app_manifests()
+    registry_by_id = registry_apps_by_id()
+    installed_by_id = {app["id"]: enrich_app(app, registry_by_id.get(app["id"])) for app in apps}
+    recommendations = []
+    for item in recommended_apps_for_profile(profile):
+        installed = installed_by_id.get(item["id"])
+        registry_app = registry_by_id.get(item["id"])
+        update = app_update_metadata(installed, registry_app) if installed and registry_app else {"update_available": False}
+        recommendations.append({
+            **item,
+            "installed": installed is not None,
+            "installed_version": installed.get("version", "") if installed else "",
+            "registry_available": registry_app is not None,
+            "registry_version": registry_app.get("version", "") if registry_app else "",
+            "ui": installed.get("ui", {}) if installed else registry_app.get("ui", {}) if registry_app else {},
+            "runtime": installed.get("runtime", "") if installed else registry_app.get("runtime", "") if registry_app else "",
+            "source": installed.get("source", "") if installed else "local-registry" if registry_app else "profile",
+            "update": update,
+            "action": recommended_app_action(installed, registry_app),
+        })
+    return {"device_profile": profile, "recommendations": recommendations}
+
+
 def app_catalog():
     apps, errors = raw_app_manifests()
     registry_by_id = registry_apps_by_id()
     enriched = [enrich_app(app, registry_by_id.get(app["id"])) for app in apps]
-    app_ids = {app["id"] for app in enriched}
-    recommendations = []
-    for item in recommended_apps_for_profile():
-        recommendations.append({**item, "installed": item["id"] in app_ids})
+    preview = app_recommendation_preview(read_device_profile())
     return {
         "apps": enriched,
         "errors": errors,
         "manifest_dir": str(APP_MANIFEST_DIR),
         "schema_version": APP_MANIFEST_SCHEMA_VERSION,
         "container_runtime": container_runtime_status(),
-        "device_profile": read_device_profile(),
-        "recommendations": recommendations,
+        "device_profile": preview["device_profile"],
+        "recommendations": preview["recommendations"],
     }
 
 
@@ -3304,6 +3392,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/apps/validate":
                 self.send_json(200, validate_app_manifest_payload(payload))
+                return
+            if path == "/api/apps/recommendations":
+                profile = payload.get("device_profile") if isinstance(payload.get("device_profile"), dict) else payload
+                self.send_json(200, app_recommendation_preview(profile))
                 return
             if path == "/api/apps/install":
                 self.send_json(200, install_app_manifest(payload))

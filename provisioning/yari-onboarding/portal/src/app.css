@@ -39,6 +39,7 @@ body {
 button,
 .button,
 input,
+select,
 textarea { font: inherit; }
 
 button,
@@ -74,12 +75,14 @@ button.danger,
 button:focus-visible,
 .button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--atlas-text);
   outline-offset: 2px;
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--atlas-border);
@@ -297,6 +300,31 @@ textarea {
   gap: 12px;
 }
 
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.preset-card {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 6px;
+  min-height: 112px;
+  padding: 12px;
+  text-align: left;
+}
+
+.preset-card.active {
+  background: var(--atlas-action);
+  color: var(--atlas-action-text);
+  border-color: var(--atlas-action);
+}
+
+.preset-card.active small { color: var(--atlas-action-text); }
+
 .summary-grid > div,
 .app-card {
   border: 1px solid var(--atlas-border);
@@ -467,3 +495,27 @@ button:disabled {
   color: var(--atlas-danger);
 }
 
+
+.mini-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.mini-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+}
+
+.compact-meta {
+  gap: 4px;
+  font-size: 12px;
+}
+
+.compact-meta div {
+  grid-template-columns: 54px 1fr;
+}

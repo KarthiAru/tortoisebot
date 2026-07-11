@@ -173,6 +173,79 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertIn("recommendations", catalog)
         self.assertIn("device_profile", catalog)
 
+    def test_app_recommendation_preview_uses_unsaved_profile(self):
+        preview = self.module.app_recommendation_preview({
+            "profile_preset": "px4_companion",
+            "vehicle_class": "multirotor",
+            "autopilot_stack": "px4",
+            "compute_target": "jetson_orin",
+            "ros_domain_id": 3,
+        })
+        ids = {item["id"] for item in preview["recommendations"]}
+        self.assertEqual(preview["device_profile"]["profile_preset"], "px4_companion")
+        self.assertIn("mavlink-router", ids)
+        self.assertIn("autopilot-log-downloader", ids)
+        self.assertIn("video-manager", ids)
+        self.assertTrue(all("installed" in item for item in preview["recommendations"]))
+        self.assertTrue(all("action" in item for item in preview["recommendations"]))
+        self.assertIn("kind", preview["recommendations"][0]["action"])
+
+    def test_app_recommendation_actions_cover_open_install_and_missing(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_REGISTRY_DIR / "autopilot-log-downloader.json").write_text(json.dumps({
+            "schema_version": "1",
+            "id": "autopilot-log-downloader",
+            "name": "Autopilot Log Downloader",
+            "version": "0.1.0",
+            "runtime": "service-bundle",
+            "services": ["yari-log-manager"],
+            "permissions": ["logs.read", "storage.write"],
+            "ui": {"path": "#data"},
+        }))
+        preview = self.module.app_recommendation_preview({
+            "profile_preset": "px4_companion",
+            "vehicle_class": "multirotor",
+            "autopilot_stack": "px4",
+            "compute_target": "jetson_orin",
+            "ros_domain_id": 0,
+        })
+        by_id = {item["id"]: item for item in preview["recommendations"]}
+        self.assertEqual(by_id["mavlink-router"]["action"]["kind"], "open")
+        self.assertEqual(by_id["autopilot-log-downloader"]["action"]["kind"], "install")
+
+        missing_preview = self.module.app_recommendation_preview({
+            "profile_preset": "ros_ground_robot",
+            "vehicle_class": "ground_rover",
+            "autopilot_stack": "ros_only",
+            "compute_target": "raspberry_pi",
+            "ros_domain_id": 0,
+        })
+        missing_by_id = {item["id"]: item for item in missing_preview["recommendations"]}
+        self.assertEqual(missing_by_id["ground-slam-mapping"]["action"]["kind"], "missing")
+
+    def test_builtin_recommendation_does_not_offer_registry_update(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_REGISTRY_DIR / "ros2-manager.json").write_text(json.dumps({
+            "schema_version": "1",
+            "id": "ros2-manager",
+            "name": "ROS 2 Manager",
+            "version": "99.0.0",
+            "runtime": "service-bundle",
+            "services": ["yari-ros"],
+            "permissions": ["ros.read"],
+            "ui": {"path": "#ros"},
+        }))
+        preview = self.module.app_recommendation_preview({
+            "profile_preset": "ros_ground_robot",
+            "vehicle_class": "ground_rover",
+            "autopilot_stack": "ros_only",
+            "compute_target": "raspberry_pi",
+            "ros_domain_id": 0,
+        })
+        ros2 = next(item for item in preview["recommendations"] if item["id"] == "ros2-manager")
+        self.assertEqual(ros2["source"], "builtin")
+        self.assertEqual(ros2["action"]["kind"], "open")
+
     def test_app_recommendations_follow_device_profile(self):
         ground = self.module.recommended_apps_for_profile({"vehicle_class": "ground_rover", "autopilot_stack": "ros_only"})
         ground_ids = {item["id"] for item in ground}
@@ -879,8 +952,43 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(config["atlas_url"], "http://atlas/api/v1")
         self.assertEqual(config["atlas_upload_url"], "http://atlas/upload")
 
+    def test_save_setup_config_persists_device_profile_payload(self):
+        result = self.module.save_setup_config({
+            "hostname": "tortoisebot",
+            "device_profile": {
+                "profile_preset": "ardupilot_companion",
+                "vehicle_class": "multirotor",
+                "autopilot_stack": "ardupilot",
+                "compute_target": "raspberry_pi",
+                "ros_domain_id": 7,
+            },
+        })
+        self.assertTrue(result["ok"])
+        config = self.module.read_json_file(self.module.PORTAL_CONFIG_FILE, {})
+        self.assertEqual(config["device_profile"]["profile_preset"], "ardupilot_companion")
+        self.assertEqual(config["device_profile"]["autopilot_stack"], "ardupilot")
+        self.assertEqual(config["device_profile"]["ros_domain_id"], 7)
+
+    def test_device_profile_presets_include_supported_roles(self):
+        presets = self.module.device_profile_presets()
+        ids = {item["id"] for item in presets["presets"]}
+        self.assertEqual(presets["default"], "tortoisebot_rover")
+        self.assertIn("px4_companion", ids)
+        self.assertIn("ardupilot_companion", ids)
+        self.assertIn("custom", ids)
+        px4 = next(item for item in presets["presets"] if item["id"] == "px4_companion")
+        self.assertEqual(px4["values"]["autopilot_stack"], "px4")
+
+    def test_default_device_profile_is_tortoisebot_rover(self):
+        profile = self.module.read_device_profile()
+        self.assertEqual(profile["profile_preset"], "tortoisebot_rover")
+        self.assertEqual(profile["vehicle_class"], "ground_rover")
+        self.assertEqual(profile["autopilot_stack"], "ros_only")
+        self.assertEqual(profile["compute_target"], "raspberry_pi")
+
     def test_save_device_profile_validates_and_persists_role_metadata(self):
         result = self.module.save_device_profile({
+            "profile_preset": "px4_companion",
             "vehicle_class": "multirotor",
             "autopilot_stack": "px4",
             "compute_target": "jetson_orin",
@@ -888,14 +996,18 @@ class YariOnboardingTests(unittest.TestCase):
             "notes": "lab drone",
         })
         self.assertTrue(result["ok"])
+        self.assertEqual(result["profile"]["profile_preset"], "px4_companion")
         self.assertEqual(result["profile"]["vehicle_class"], "multirotor")
         self.assertEqual(result["profile"]["autopilot_stack"], "px4")
         self.assertEqual(result["profile"]["compute_target"], "jetson_orin")
         self.assertEqual(result["profile"]["ros_domain_id"], 42)
         self.assertEqual(oct(self.module.PORTAL_CONFIG_FILE.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.module.device_status()["profile"]["profile_preset"], "px4_companion")
         self.assertEqual(self.module.device_status()["profile"]["vehicle_class"], "multirotor")
 
     def test_save_device_profile_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            self.module.save_device_profile({"profile_preset": "unsupported"})
         with self.assertRaises(ValueError):
             self.module.save_device_profile({"vehicle_class": "spaceship"})
         with self.assertRaises(ValueError):

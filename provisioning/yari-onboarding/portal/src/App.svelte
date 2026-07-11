@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import './app.css';
+  import RecommendationCard from './RecommendationCard.svelte';
   import type { AnyRecord, DeviceStatus, NetworkDiagnostics, NetworkStatus, PortalVersion, ServiceList } from './types';
 
   type Tab = 'setup' | 'status' | 'network' | 'services' | 'logs' | 'maintenance' | 'autopilot' | 'ros' | 'video' | 'data' | 'apps';
@@ -44,6 +45,8 @@
   let apps: AnyRecord | null = null;
   let appRegistry: AnyRecord | null = null;
   let appPackages: AnyRecord | null = null;
+  let profileRecommendations: AnyRecord | null = null;
+  let profilePresets: Array<AnyRecord> = [];
   let appPackageFile: File | null = null;
   let appPackageReplace = true;
   let appOutput: unknown = { message: 'Select an app action.' };
@@ -52,7 +55,7 @@
   let previewState = 'Preview not loaded.';
   let mavlinkConfigText = '{}';
   let setupForm = { ssid: '', password: '', hostname: '', ssh_key: '', ssh_password: '', atlas_url: '', atlas_upload_url: '', atlas_token: '', foxglove_token: '' };
-  let deviceProfileForm = { vehicle_class: 'ground_rover', autopilot_stack: 'none', compute_target: 'raspberry_pi', ros_domain_id: 0, notes: '' };
+  let deviceProfileForm = { profile_preset: 'tortoisebot_rover', vehicle_class: 'ground_rover', autopilot_stack: 'ros_only', compute_target: 'raspberry_pi', ros_domain_id: 0, notes: '' };
   let rosRecordForm = { name: '', topics: '' };
   let selectedRosProfile = '';
   let videoForm = { stream_enabled: false, device: '', rtsp_url: 'rtsp://127.0.0.1:8554/yari-video', size: '640x480', fps: 15, encoding: 'mjpeg', bandwidth_kbps: '', foxglove_topic: '/camera/image_raw/compressed', atlas_webrtc_enabled: false, atlas_camera_topic: '/camera/image_raw/compressed', atlas_max_video_fps: 15 };
@@ -286,6 +289,15 @@
   function recommendationSummary(item: AnyRecord) {
     const reasons = Array.isArray(item.reasons) ? item.reasons.join(', ') : item.reason || '';
     return reasons || item.description || 'Recommended for this device profile.';
+  }
+
+  function profileRecommendationItems() {
+    return profileRecommendations?.recommendations || apps?.recommendations || [];
+  }
+
+  function applyProfilePreset(preset: AnyRecord) {
+    deviceProfileForm = { ...deviceProfileForm, ...preset.values };
+    refreshProfileRecommendations();
   }
 
   function serviceItems() {
@@ -732,15 +744,19 @@
     device = await api<DeviceStatus>('/api/device/status');
     portalVersion = await api<PortalVersion>('/api/portal/version');
     setupState = await api<AnyRecord>('/api/setup/status');
+    const presetCatalog = await api<AnyRecord>('/api/device/profile/presets');
+    profilePresets = presetCatalog.presets || [];
     setupForm.hostname = device.hostname || setupForm.hostname || 'tortoisebot';
     const profile = device.profile || {};
     deviceProfileForm = {
+      profile_preset: profile.profile_preset || 'custom',
       vehicle_class: profile.vehicle_class || 'ground_rover',
-      autopilot_stack: profile.autopilot_stack || 'none',
+      autopilot_stack: profile.autopilot_stack || 'ros_only',
       compute_target: profile.compute_target || 'raspberry_pi',
       ros_domain_id: Number(profile.ros_domain_id ?? 0),
       notes: profile.notes || '',
     };
+    await refreshProfileRecommendations();
   }
 
   async function refreshNetwork() {
@@ -828,6 +844,11 @@
     appPackages = await api<AnyRecord>('/api/apps/packages');
   }
 
+
+  async function refreshProfileRecommendations() {
+    profileRecommendations = await post<AnyRecord>('/api/apps/recommendations', { device_profile: deviceProfileForm });
+  }
+
   async function refreshAll() {
     loading = true;
     error = '';
@@ -846,9 +867,9 @@
   }
 
   async function saveSetup() {
-    setupState = await post('/api/setup/config', setupForm);
+    setupState = await post('/api/setup/config', { ...setupForm, device_profile: deviceProfileForm });
     setAction(setupState);
-    await Promise.allSettled([refreshDevice(), refreshNetwork()]);
+    await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshApps(), refreshProfileRecommendations()]);
   }
 
   async function enableAp() {
@@ -1160,6 +1181,45 @@
         </form>
       </div>
 
+      <div class="card wide">
+        <h2>Device Role</h2>
+        <div class="preset-grid">
+          {#each profilePresets as preset}
+            <button class:active={deviceProfileForm.profile_preset === preset.id} class="preset-card secondary" type="button" on:click={() => applyProfilePreset(preset)}>
+              <strong>{preset.label}</strong>
+              <small>{preset.description}</small>
+            </button>
+          {/each}
+        </div>
+        <form on:submit|preventDefault={saveSetup}>
+          <label>Profile preset<select bind:value={deviceProfileForm.profile_preset} on:change={refreshProfileRecommendations}>{#each profilePresets as preset}<option value={preset.id}>{preset.label}</option>{/each}</select></label>
+          <label>Vehicle class<select bind:value={deviceProfileForm.vehicle_class} on:change={refreshProfileRecommendations}><option value="ground_rover">Ground rover</option><option value="multirotor">Multirotor</option><option value="fixed_wing">Fixed wing</option><option value="vtol">VTOL</option><option value="boat">Boat</option><option value="sub">Sub</option><option value="generic_edge">Generic edge</option></select></label>
+          <label>Autopilot stack<select bind:value={deviceProfileForm.autopilot_stack} on:change={refreshProfileRecommendations}><option value="none">None</option><option value="px4">PX4</option><option value="ardupilot">ArduPilot</option><option value="ros_only">ROS only</option><option value="custom">Custom</option></select></label>
+          <label>Compute target<select bind:value={deviceProfileForm.compute_target} on:change={refreshProfileRecommendations}><option value="raspberry_pi">Raspberry Pi</option><option value="jetson_orin">Jetson Orin</option><option value="jetson_nano">Jetson Nano</option><option value="x86_ubuntu">x86 Ubuntu</option><option value="custom">Custom</option></select></label>
+          <label>ROS domain ID<input bind:value={deviceProfileForm.ros_domain_id} type="number" min="0" max="232" on:change={refreshProfileRecommendations} /></label>
+          <button type="submit">Save device role</button>
+        </form>
+        <div class="mini-section">
+          <h3>Recommended apps</h3>
+          <div class="app-grid compact-grid">
+            {#each profileRecommendationItems() as item}
+              {@const app = recommendationApp(item)}
+              {@const registryApp = registryAppById(item.id)}
+              <RecommendationCard
+                {item}
+                {app}
+                {registryApp}
+                statusLabel={recommendationStatus(item)}
+                statusClass={recommendationStatusClass(item)}
+                {registryActionLabel}
+                onOpen={openUiPath}
+                onInstall={installRegistryApp}
+              />
+            {/each}
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <h2>SSH Access</h2>
         <form on:submit|preventDefault={saveSetup}>
@@ -1218,14 +1278,42 @@
       </div>
       <div class="card">
         <h2>Device Profile</h2>
+        <div class="preset-grid">
+          {#each profilePresets as preset}
+            <button class:active={deviceProfileForm.profile_preset === preset.id} class="preset-card secondary" type="button" on:click={() => applyProfilePreset(preset)}>
+              <strong>{preset.label}</strong>
+              <small>{preset.description}</small>
+            </button>
+          {/each}
+        </div>
         <form on:submit|preventDefault={saveDeviceProfile}>
-          <label>Vehicle class<select bind:value={deviceProfileForm.vehicle_class}><option value="ground_rover">Ground rover</option><option value="multirotor">Multirotor</option><option value="fixed_wing">Fixed wing</option><option value="vtol">VTOL</option><option value="boat">Boat</option><option value="sub">Sub</option><option value="generic_edge">Generic edge</option></select></label>
-          <label>Autopilot stack<select bind:value={deviceProfileForm.autopilot_stack}><option value="none">None</option><option value="px4">PX4</option><option value="ardupilot">ArduPilot</option><option value="ros_only">ROS only</option><option value="custom">Custom</option></select></label>
-          <label>Compute target<select bind:value={deviceProfileForm.compute_target}><option value="raspberry_pi">Raspberry Pi</option><option value="jetson_orin">Jetson Orin</option><option value="jetson_nano">Jetson Nano</option><option value="x86_ubuntu">x86 Ubuntu</option><option value="custom">Custom</option></select></label>
-          <label>ROS domain ID<input bind:value={deviceProfileForm.ros_domain_id} type="number" min="0" max="232" /></label>
+          <label>Profile preset<select bind:value={deviceProfileForm.profile_preset} on:change={refreshProfileRecommendations}>{#each profilePresets as preset}<option value={preset.id}>{preset.label}</option>{/each}</select></label>
+          <label>Vehicle class<select bind:value={deviceProfileForm.vehicle_class} on:change={refreshProfileRecommendations}><option value="ground_rover">Ground rover</option><option value="multirotor">Multirotor</option><option value="fixed_wing">Fixed wing</option><option value="vtol">VTOL</option><option value="boat">Boat</option><option value="sub">Sub</option><option value="generic_edge">Generic edge</option></select></label>
+          <label>Autopilot stack<select bind:value={deviceProfileForm.autopilot_stack} on:change={refreshProfileRecommendations}><option value="none">None</option><option value="px4">PX4</option><option value="ardupilot">ArduPilot</option><option value="ros_only">ROS only</option><option value="custom">Custom</option></select></label>
+          <label>Compute target<select bind:value={deviceProfileForm.compute_target} on:change={refreshProfileRecommendations}><option value="raspberry_pi">Raspberry Pi</option><option value="jetson_orin">Jetson Orin</option><option value="jetson_nano">Jetson Nano</option><option value="x86_ubuntu">x86 Ubuntu</option><option value="custom">Custom</option></select></label>
+          <label>ROS domain ID<input bind:value={deviceProfileForm.ros_domain_id} type="number" min="0" max="232" on:change={refreshProfileRecommendations} /></label>
           <label>Notes<textarea rows="4" bind:value={deviceProfileForm.notes}></textarea></label>
           <button type="submit">Save device profile</button>
         </form>
+        <div class="mini-section">
+          <h3>Recommended apps</h3>
+          <div class="app-grid compact-grid">
+            {#each profileRecommendationItems() as item}
+              {@const app = recommendationApp(item)}
+              {@const registryApp = registryAppById(item.id)}
+              <RecommendationCard
+                {item}
+                {app}
+                {registryApp}
+                statusLabel={recommendationStatus(item)}
+                statusClass={recommendationStatusClass(item)}
+                {registryActionLabel}
+                onOpen={openUiPath}
+                onInstall={installRegistryApp}
+              />
+            {/each}
+          </div>
+        </div>
       </div>
       <div class="card wide"><h2>Raw Device Status</h2><pre>{pretty({ device, portal: portalVersion })}</pre></div>
     </section>

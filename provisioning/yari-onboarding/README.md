@@ -13,6 +13,7 @@ This implementation is the first YARI OS core portal slice:
 - Persistent Wi-Fi profile written to `/etc/NetworkManager/system-connections/yari-wifi.nmconnection` when NetworkManager is available.
 - Netplan fallback writer for current Ubuntu Server compatibility.
 - Device profile, network, service, log, MAVLink, ROS, video, data, app, OTA readiness, and recovery-policy API scaffolding.
+- Profile presets for TortoiseBot, generic ROS rovers, PX4 companions, ArduPilot companions, and generic edge devices; app recommendations use this profile metadata.
 - Allowlisted service actions only; no arbitrary shell or systemctl endpoint.
 - Optional `YARI_PORTAL_API_TOKEN` protection for mutating local portal API calls in production images.
 
@@ -90,7 +91,7 @@ Target first-run UX:
 2. Power on the device.
 3. If no valid network exists, the device starts `YARI-<device-id>` setup AP.
 4. User opens `http://192.168.4.1`.
-5. Web UI collects Wi-Fi, hostname, SSH access, Atlas/Foxglove tokens, and optional role/profile.
+5. Web UI collects Wi-Fi, hostname, SSH access, Atlas/Foxglove tokens, and a device role/profile preset.
 6. Device validates and persists configuration.
 7. Device reboots or switches to client Wi-Fi.
 8. If Wi-Fi fails later, fallback AP returns for recovery.
@@ -195,7 +196,10 @@ Local registry update detection:
 - Registry and installed-app cards expose `installed_version`, `registry_version`, `manifest_digest`, `registry_digest`, and `update_available` so the portal and Atlas can show whether an app manifest should be applied.
 - `POST /api/apps/validate` normalizes and validates a manifest without persisting it, reporting whether install/update would be allowed.
 - `POST /api/apps/<id>/update` applies the matching registry manifest to an already-installed app only when the registry digest differs.
+- `POST /api/apps/recommendations` accepts a full or partial `device_profile` payload and returns the normalized profile plus recommended apps with `installed`, `registry_available`, `update`, `ui`, and `action` metadata. The action contract is shared by the local portal and future Atlas orchestration: `open`, `install`, `update`, `ready`, or `missing`.
+- `GET /api/device/profile/presets` returns the profile preset catalog used by first-run setup, Status, recommendations, and future Atlas orchestration.
 - This is intentionally local-first; cloud registry metadata and signed app packages can build on the same fields later.
+- Device profile presets (`tortoisebot_rover`, `ros_ground_robot`, `px4_companion`, `ardupilot_companion`, `generic_edge`, `custom`) are stored in `/etc/yari/device-portal.json` and exposed through the Status tab. These presets are the first operator-facing hook for selecting the right built-in and registry apps for a rover, PX4/ArduPilot aircraft, or generic edge computer.
 
 Minimal container manifest:
 
