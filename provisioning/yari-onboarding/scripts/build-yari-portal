@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PORTAL_SRC="${SRC_ROOT}/portal"
+PORTAL_DIST="${PORTAL_SRC}/dist"
+MIN_NODE_MAJOR="${YARI_PORTAL_MIN_NODE_MAJOR:-18}"
+SKIP_NPM_CI="${YARI_PORTAL_SKIP_NPM_CI:-0}"
+
+info() {
+  echo "==> $*"
+}
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+node_major_version() {
+  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0
+}
+
+require_build_tools() {
+  command -v node >/dev/null 2>&1 || die "Node.js is required to build the Svelte YARI OS portal. Install Node.js >= ${MIN_NODE_MAJOR}."
+  command -v npm >/dev/null 2>&1 || die "npm is required to build the Svelte YARI OS portal. Install Node.js/npm."
+
+  local major
+  major="$(node_major_version)"
+  [[ "${major}" =~ ^[0-9]+$ ]] || die "Unable to determine Node.js major version."
+  (( major >= MIN_NODE_MAJOR )) || die "YARI portal build requires Node.js >= ${MIN_NODE_MAJOR}; found $(node --version 2>/dev/null || echo unknown)."
+}
+
+validate_source() {
+  [[ -f "${PORTAL_SRC}/package.json" ]] || die "Missing Svelte portal package.json at ${PORTAL_SRC}."
+  [[ -f "${PORTAL_SRC}/package-lock.json" ]] || die "Missing package-lock.json at ${PORTAL_SRC}; npm ci needs the lockfile for reproducible builds."
+}
+
+validate_dist() {
+  [[ -f "${PORTAL_DIST}/index.html" ]] || die "Portal build did not create ${PORTAL_DIST}/index.html."
+  [[ -f "${PORTAL_DIST}/portal-version.json" ]] || die "Portal build did not create ${PORTAL_DIST}/portal-version.json."
+  [[ -f "${PORTAL_DIST}/portal-assets.json" ]] || die "Portal build did not create ${PORTAL_DIST}/portal-assets.json."
+
+  shopt -s nullglob
+  local portal_gzip_assets=("${PORTAL_DIST}"/*.gz "${PORTAL_DIST}"/assets/*.gz)
+  shopt -u nullglob
+  (( ${#portal_gzip_assets[@]} > 0 )) || die "Portal build did not create precompressed .gz assets."
+}
+
+main() {
+  validate_source
+  require_build_tools
+
+  info "Building Svelte YARI OS portal in ${PORTAL_SRC}"
+  cd "${PORTAL_SRC}"
+
+  if [[ "${SKIP_NPM_CI}" != "1" ]]; then
+    npm ci
+  elif [[ ! -d node_modules ]]; then
+    die "YARI_PORTAL_SKIP_NPM_CI=1 was set, but node_modules is missing."
+  fi
+
+  npm run build
+  validate_dist
+  info "Svelte YARI OS portal built at ${PORTAL_DIST}"
+}
+
+main "$@"

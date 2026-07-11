@@ -140,22 +140,8 @@ build_yari_portal() {
   fi
   [[ -f "${portal_dir}/package.json" ]] || die "Missing Svelte portal package.json at ${portal_dir}."
 
-  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    die "YARI portal build requires Node.js >= 18 and npm on the host."
-  fi
-
-  local node_major
-  node_major="$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)"
-  if (( node_major < 18 )); then
-    die "YARI portal build requires Node.js >= 18; found $(node --version 2>/dev/null || echo unknown)."
-  fi
-
   info "Building Svelte YARI OS portal"
-  (
-    cd "${portal_dir}"
-    run_as_invoking_user npm ci
-    run_as_invoking_user npm run build
-  )
+  run_as_invoking_user "${REPO_ROOT}/provisioning/yari-onboarding/scripts/build-yari-portal"
 }
 
 IMAGE_NAME="$(basename "${IMAGE_URL}")"

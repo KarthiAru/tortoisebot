@@ -60,7 +60,7 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 ## Web UI Stack Direction
 
-The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist/index.html` is missing, the installer first uses existing Node.js/npm when Node is version 18 or newer; otherwise it attempts to install Node.js 20 through apt/NodeSource. If build tools still are not available, installation fails with an explicit build requirement.
+The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. Build the deployable static bundle with `provisioning/yari-onboarding/scripts/build-yari-portal`; it runs `npm ci`, `npm run build`, verifies `portal-version.json`, `portal-assets.json`, and precompressed `.gz` assets, then leaves the runtime artifact in `portal/dist`. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist/index.html` is missing, the installer first uses existing Node.js/npm when Node is version 18 or newer; otherwise it attempts to install Node.js 20 through apt/NodeSource. If build tools still are not available, installation fails with an explicit build requirement.
 
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
@@ -69,6 +69,16 @@ YARI OS should follow the Atlas design-system direction documented in `yari-atla
 - Reserve color for semantic status, brand artwork, and destructive/error/warning states.
 - Prefer local editable primitives instead of adopting a large UI library wholesale.
 - Use Lucide-style outline icons for controls, with accessible labels for icon-only actions.
+
+Build and install the current portal on a development machine or robot checkout:
+
+```bash
+provisioning/yari-onboarding/scripts/build-yari-portal
+sudo provisioning/yari-onboarding/scripts/install-yari-onboarding
+sudo systemctl restart yari-onboarding.service
+```
+
+For fresh image builds, `provisioning/scripts/build_tortoisebot_image.sh` calls the same helper before writing `/opt/yari/onboarding/web` into the root filesystem. For on-device updates, `install-yari-onboarding` uses an existing `portal/dist` when present or bootstraps Node.js 20 and runs the same helper when a build is missing.
 
 Recommended evolution:
 

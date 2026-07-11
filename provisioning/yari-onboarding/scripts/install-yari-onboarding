@@ -12,6 +12,7 @@ install -d -m 0755 /usr/local/sbin /usr/local/bin
 install -m 0755 "${SRC_ROOT}/scripts/yari-onboarding" /usr/local/sbin/yari-onboarding
 install -m 0755 "${SRC_ROOT}/scripts/yari-service-manager" /usr/local/sbin/yari-service-manager
 install -m 0755 "${SRC_ROOT}/scripts/yari-package-app" /usr/local/bin/yari-package-app
+install -m 0755 "${SRC_ROOT}/scripts/build-yari-portal" /usr/local/bin/build-yari-portal
 
 install -d -m 0755 /opt/yari/onboarding/web
 PORTAL_SRC="${SRC_ROOT}/portal"
@@ -52,16 +53,6 @@ install_node20_build_tools() {
   portal_build_tools_ready
 }
 
-run_portal_build() {
-  local portal_owner build_command
-  portal_owner="$(stat -c '%U' "${PORTAL_SRC}" 2>/dev/null || echo root)"
-  build_command="cd '${PORTAL_SRC}' && if [[ ! -d node_modules || package-lock.json -nt node_modules/.package-lock.json ]]; then npm ci; fi && npm run build"
-  if [[ "${portal_owner}" != "root" && "${portal_owner}" != "UNKNOWN" ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u "${portal_owner}" -- bash -lc "${build_command}"
-  else
-    bash -lc "${build_command}"
-  fi
-}
 
 validate_portal_dist() {
   if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
@@ -88,7 +79,7 @@ if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
     exit 1
   fi
   echo "Building Svelte YARI OS portal from ${PORTAL_SRC}"
-  run_portal_build
+  "${SRC_ROOT}/scripts/build-yari-portal"
 fi
 
 if ! validate_portal_dist; then

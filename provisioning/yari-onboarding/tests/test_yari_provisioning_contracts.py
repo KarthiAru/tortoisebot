@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install_tortoisebot_humble.sh"
 IMAGE_SCRIPT = REPO_ROOT / "scripts" / "build_tortoisebot_image.sh"
 ONBOARDING_INSTALLER = REPO_ROOT / "yari-onboarding" / "scripts" / "install-yari-onboarding"
+PORTAL_BUILD_HELPER = REPO_ROOT / "yari-onboarding" / "scripts" / "build-yari-portal"
 
 
 def apt_install_packages(script_text):
@@ -50,6 +51,22 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("portal_gzip_assets=", text)
         self.assertIn("precompressed assets missing", text)
         self.assertLess(text.index("validate_portal_dist"), text.index("cp -a \"${PORTAL_DIST}/.\" /opt/yari/onboarding/web/"))
+
+    def test_portal_build_helper_is_reproducible_and_metadata_checked(self):
+        text = PORTAL_BUILD_HELPER.read_text(encoding="utf-8")
+        self.assertIn("npm ci", text)
+        self.assertIn("npm run build", text)
+        self.assertIn("package-lock.json", text)
+        self.assertIn("portal-version.json", text)
+        self.assertIn("portal-assets.json", text)
+        self.assertIn("precompressed .gz assets", text)
+
+    def test_image_builder_and_installer_use_shared_portal_build_helper(self):
+        image_text = IMAGE_SCRIPT.read_text(encoding="utf-8")
+        installer_text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("build-yari-portal", image_text)
+        self.assertIn("build-yari-portal", installer_text)
+        self.assertIn("/usr/local/bin/build-yari-portal", installer_text)
     def test_image_builder_copies_prebuilt_portal_into_rootfs(self):
         text = IMAGE_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("build_yari_portal", text)
