@@ -4,7 +4,7 @@
   import RecommendationCard from './RecommendationCard.svelte';
   import type { AnyRecord, DeviceStatus, NetworkDiagnostics, NetworkStatus, PortalVersion, ServiceList } from './types';
 
-  type Tab = 'setup' | 'status' | 'network' | 'services' | 'logs' | 'maintenance' | 'autopilot' | 'ros' | 'video' | 'data' | 'apps';
+  type Tab = 'setup' | 'status' | 'network' | 'services' | 'logs' | 'maintenance' | 'autopilot' | 'tortoisebot' | 'ros' | 'video' | 'data' | 'apps';
 
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'setup', label: 'Setup' },
@@ -14,6 +14,7 @@
     { id: 'logs', label: 'Logs' },
     { id: 'maintenance', label: 'Maintenance' },
     { id: 'autopilot', label: 'Autopilot' },
+    { id: 'tortoisebot', label: 'TortoiseBot' },
     { id: 'ros', label: 'ROS 2' },
     { id: 'video', label: 'Video' },
     { id: 'data', label: 'Data' },
@@ -40,6 +41,7 @@
   let mavlink: AnyRecord | null = null;
   let ros: AnyRecord | null = null;
   let rosTopics: AnyRecord | null = null;
+  let tortoisebot: AnyRecord | null = null;
   let video: AnyRecord | null = null;
   let dataStatus: AnyRecord | null = null;
   let otaStatus: AnyRecord | null = null;
@@ -52,6 +54,7 @@
   let appPackageReplace = true;
   let appOutput: unknown = { message: 'Select an app action.' };
   let actionOutput: unknown = { message: 'Ready.' };
+  let busyAction = '';
   let previewUrl = '';
   let previewState = 'Preview not loaded.';
   let mavlinkConfigText = '{}';
@@ -59,6 +62,7 @@
   let deviceProfileForm = { profile_preset: 'tortoisebot_rover', vehicle_class: 'ground_rover', autopilot_stack: 'ros_only', compute_target: 'raspberry_pi', ros_domain_id: 0, notes: '' };
   let rosRecordForm = { name: '', topics: '' };
   let selectedRosProfile = '';
+  let atlasBridgeForm = { atlas_url: 'http://192.168.0.181:8100/api/v1', camera_topic: '/camera/image_raw/compressed', cmd_vel_topic: '/cmd_vel', max_video_fps: 15 };
   let videoForm = { stream_enabled: false, device: '', rtsp_url: 'rtsp://127.0.0.1:8554/yari-video', size: '640x480', fps: 15, encoding: 'mjpeg', bandwidth_kbps: '', foxglove_topic: '/camera/image_raw/compressed', atlas_webrtc_enabled: false, atlas_camera_topic: '/camera/image_raw/compressed', atlas_max_video_fps: 15 };
   let flightLogForm = { log_id: '', endpoint_name: '' };
   let networkPolicyForm = { fallback_ap_enabled: true, fallback_timeout_sec: 45, maintenance_ap_enabled: false, serve_portal_on_client_network: true };
@@ -116,6 +120,76 @@
 
   function setAction(value: unknown) {
     actionOutput = value;
+  }
+
+  function isBusy(action: string) {
+    return busyAction === action;
+  }
+
+  async function withBusy<T>(action: string, task: () => Promise<T>): Promise<T | undefined> {
+    busyAction = action;
+    error = '';
+    try {
+      return await task();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error = message;
+      setAction({ ok: false, error: message });
+      return undefined;
+    } finally {
+      busyAction = '';
+    }
+  }
+
+  function buttonText(action: string, idle: string, busy = 'Working...') {
+    return isBusy(action) ? busy : idle;
+  }
+
+  function resultRecord(value: unknown): AnyRecord {
+    return typeof value === 'object' && value !== null ? value as AnyRecord : { message: String(value || 'Ready.') };
+  }
+
+  function resultStatus(value: unknown) {
+    const item = resultRecord(value);
+    if (item.ok === false || item.error) return { className: 'bad', label: 'Needs attention' };
+    if (item.ok === true) return { className: 'ok', label: 'Complete' };
+    return { className: 'warn', label: 'Ready' };
+  }
+
+  function resultItems(value: unknown) {
+    const item = resultRecord(value);
+    const rows = [
+      { label: 'Message', value: item.message || item.error || item.label || 'Ready.' },
+      { label: 'Action', value: item.action || item.profile || item.name || '' },
+      { label: 'Return code', value: item.returncode ?? '' },
+      { label: 'Duration', value: item.duration_sec !== undefined ? `${item.duration_sec}s` : '' },
+      { label: 'PID', value: item.pid || item.bridge?.pid || item.launch?.pid || '' },
+      { label: 'Log file', value: item.log_file || item.bridge?.log_file || item.launch?.log_file || '' },
+      { label: 'Output', value: item.output_dir || item.recording?.output_dir || '' },
+    ];
+    return rows.filter((row) => row.value !== '' && row.value !== undefined && row.value !== null);
+  }
+
+  function resultText(value: unknown) {
+    const item = resultRecord(value);
+    return item.stderr_tail || item.stdout_tail || item.logs || item.output || '';
+  }
+
+  function setupSummaryItems() {
+    const state = setupState?.state || setupState || device?.onboarding || {};
+    const clientWifi = network?.config?.client_wifi || {};
+    return [
+      { label: 'Mode', value: state.mode || device?.onboarding?.mode || 'unknown' },
+      { label: 'Complete', value: state.complete || device?.onboarding?.complete ? 'yes' : 'no' },
+      { label: 'Hostname', value: device?.hostname || setupForm.hostname || 'not set' },
+      { label: 'Wi-Fi', value: clientWifi.configured_ssid || setupForm.ssid || 'not configured' },
+      { label: 'IP address', value: device?.ip_addresses?.join(' ') || 'not assigned' },
+      { label: 'Network backend', value: network?.config?.networkmanager ? 'NetworkManager' : 'netplan/systemd' },
+    ];
+  }
+
+  function logoSrc() {
+    return theme === 'light' ? '/assets/yari-os-logo-light.svg' : '/assets/yari-os-logo-dark.svg';
   }
 
   function tabFromHash(): Tab | null {
@@ -494,6 +568,38 @@
         detail: manager.message || ros?.service?.active || 'manager heartbeat unavailable',
       },
     ];
+  }
+
+  function tortoisebotItems() {
+    const launch = tortoisebot?.ros_launch || ros?.launch || {};
+    const bridge = tortoisebot?.atlas_bridge || {};
+    const lastOperation = tortoisebot?.operations?.last_operation || {};
+    return [
+      {
+        label: 'ROS Bringup',
+        state: launch.active || launch.running ? 'ok' : 'warn',
+        detail: launch.active || launch.running ? launch.profile || 'hardware launch running' : 'stopped',
+      },
+      {
+        label: 'Atlas Bridge',
+        state: bridge.active ? 'ok' : 'warn',
+        detail: bridge.active ? `pid ${bridge.pid}` : bridge.message || 'stopped',
+      },
+      {
+        label: 'Workspace',
+        state: tortoisebot?.workspace ? 'ok' : 'warn',
+        detail: tortoisebot?.workspace || '/home/tortoisebot/tb_ws',
+      },
+      {
+        label: 'Last Operation',
+        state: lastOperation.ok === false ? 'bad' : lastOperation.ok ? 'ok' : 'warn',
+        detail: lastOperation.label || 'no operation run from portal yet',
+      },
+    ];
+  }
+
+  function tortoisebotOperations() {
+    return tortoisebot?.operations?.available_operations || [];
   }
 
   function topicTypeClass(type: unknown) {
@@ -880,6 +986,17 @@
     if (!selectedRosProfile && profiles.length > 0) selectedRosProfile = profiles[0].name;
   }
 
+  async function refreshTortoisebot() {
+    tortoisebot = await api<AnyRecord>('/api/tortoisebot/status');
+    const bridge = tortoisebot?.atlas_bridge || {};
+    atlasBridgeForm = {
+      atlas_url: bridge.atlas_url || atlasBridgeForm.atlas_url,
+      camera_topic: bridge.camera_topic || atlasBridgeForm.camera_topic,
+      cmd_vel_topic: bridge.cmd_vel_topic || atlasBridgeForm.cmd_vel_topic,
+      max_video_fps: Number(bridge.max_video_fps ?? atlasBridgeForm.max_video_fps),
+    };
+  }
+
   async function refreshVideo() {
     video = await api<AnyRecord>('/api/video/status');
     const settings = video.settings || {};
@@ -932,7 +1049,7 @@
     loading = true;
     error = '';
     try {
-      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshSecurity(), refreshAutopilot(), refreshRos(), refreshVideo(), refreshData(), refreshOta(), refreshApps()]);
+      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshServices(), refreshLogs(), refreshSecurity(), refreshAutopilot(), refreshRos(), refreshTortoisebot(), refreshVideo(), refreshData(), refreshOta(), refreshApps()]);
       resolveInitialTab();
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -942,13 +1059,17 @@
   }
 
   async function scanWifi() {
-    wifiScan = await api<AnyRecord>('/api/network/wifi/scan');
+    await withBusy('scan-wifi', async () => {
+      wifiScan = await api<AnyRecord>('/api/network/wifi/scan');
+    });
   }
 
   async function saveSetup() {
-    setupState = await post('/api/setup/config', { ...setupForm, device_profile: deviceProfileForm });
-    setAction(setupState);
-    await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshApps(), refreshProfileRecommendations()]);
+    await withBusy('save-setup', async () => {
+      setupState = await post('/api/setup/config', { ...setupForm, device_profile: deviceProfileForm });
+      setAction(setupState);
+      await Promise.allSettled([refreshDevice(), refreshNetwork(), refreshApps(), refreshProfileRecommendations()]);
+    });
   }
 
   async function enableAp() {
@@ -1111,25 +1232,61 @@
   }
 
   async function startRosProfile() {
-    setAction(await post('/api/ros/launch-profile', { action: 'start', profile: selectedRosProfile }));
-    await refreshRos();
+    await withBusy('start-ros-profile', async () => {
+      setAction(await post('/api/ros/launch-profile', { action: 'start', profile: selectedRosProfile }));
+      await Promise.allSettled([refreshRos(), refreshTortoisebot()]);
+    });
   }
 
   async function stopRosProfile() {
     if (!confirm('Stop the active ROS launch profile?')) return;
-    setAction(await post('/api/ros/launch-profile', { action: 'stop' }));
-    await refreshRos();
+    await withBusy('stop-ros-profile', async () => {
+      setAction(await post('/api/ros/launch-profile', { action: 'stop' }));
+      await Promise.allSettled([refreshRos(), refreshTortoisebot()]);
+    });
   }
 
   async function startRosRecording() {
-    const topics = rosRecordForm.topics.split(/\s+/).filter(Boolean);
-    setAction(await post('/api/ros/recording/start', { name: rosRecordForm.name, topics }));
-    await refreshRos();
+    await withBusy('start-ros-recording', async () => {
+      const topics = rosRecordForm.topics.split(/\s+/).filter(Boolean);
+      setAction(await post('/api/ros/recording/start', { name: rosRecordForm.name, topics }));
+      await refreshRos();
+    });
   }
 
   async function stopRosRecording() {
-    setAction(await post('/api/ros/recording/stop'));
-    await refreshRos();
+    await withBusy('stop-ros-recording', async () => {
+      setAction(await post('/api/ros/recording/stop'));
+      await refreshRos();
+    });
+  }
+
+  async function runTortoisebotOperation(action: string) {
+    await withBusy(`tb-${action}`, async () => {
+      setAction(await post('/api/tortoisebot/operation', { action }));
+      await refreshTortoisebot();
+    });
+  }
+
+  async function startTortoisebotHardware() {
+    const profile = rosLaunchProfiles().find((item: AnyRecord) => item.name === 'tortoisebot-hardware');
+    selectedRosProfile = profile?.name || selectedRosProfile || 'tortoisebot-hardware';
+    await startRosProfile();
+  }
+
+  async function startAtlasBridge() {
+    await withBusy('start-atlas-bridge', async () => {
+      setAction(await post('/api/tortoisebot/atlas-bridge', { action: 'start', ...atlasBridgeForm }));
+      await refreshTortoisebot();
+    });
+  }
+
+  async function stopAtlasBridge() {
+    if (!confirm('Stop the Atlas ROS bridge process?')) return;
+    await withBusy('stop-atlas-bridge', async () => {
+      setAction(await post('/api/tortoisebot/atlas-bridge', { action: 'stop' }));
+      await refreshTortoisebot();
+    });
   }
 
   function clearPreviewUrl() {
@@ -1278,7 +1435,7 @@
 
 <header class="topbar">
   <div class="brand">
-    <strong>YARI OS</strong>
+    <img class="brand-logo" src={logoSrc()} alt="YARI OS" />
     <div>
       <h1>Device Portal</h1>
       <p>Local setup, diagnostics, and companion-computer controls</p>
@@ -1297,7 +1454,7 @@
       <button class:active={theme === 'light'} on:click={() => setTheme('light')}>Light</button>
       <button class:active={theme === 'dark'} on:click={() => setTheme('dark')}>Dark</button>
     </div>
-    <button class="secondary" on:click={refreshAll}>Refresh</button>
+    <button class:busy={loading} class="secondary" on:click={refreshAll} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
   </div>
 </header>
 
@@ -1319,7 +1476,7 @@
             <h2>First-Run Setup</h2>
             <p>Connect this device to Wi-Fi, name it, configure SSH access, and pair it with Atlas or Foxglove.</p>
           </div>
-          <button class="secondary" on:click={refreshAll}>Refresh setup</button>
+          <button class:busy={loading} class="secondary" on:click={refreshAll} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh setup'}</button>
         </div>
         <div class="readiness-grid">
           {#each setupItems() as item}
@@ -1334,7 +1491,7 @@
 
       <div class="card wide">
         <h2>Wi-Fi Network</h2>
-        <div class="row"><button class="secondary" on:click={scanWifi}>Scan networks</button></div>
+        <div class="row"><button class:busy={isBusy('scan-wifi')} class="secondary" on:click={scanWifi} disabled={Boolean(busyAction)}>{buttonText('scan-wifi', 'Scan networks', 'Scanning...')}</button></div>
         {#if wifiNetworks().length > 0}
           <table>
             <thead><tr><th>SSID</th><th>Signal</th><th>Security</th><th>Channel</th><th></th></tr></thead>
@@ -1361,7 +1518,7 @@
           <label>Wi-Fi SSID<input bind:value={setupForm.ssid} placeholder="Network name" /></label>
           <label>Wi-Fi password<input type="password" bind:value={setupForm.password} placeholder="Leave blank only for open networks" /></label>
           <label>Hostname<input bind:value={setupForm.hostname} placeholder="yari-device" /></label>
-          <button type="submit">Save setup</button>
+          <button class:busy={isBusy('save-setup')} type="submit" disabled={Boolean(busyAction)}>{buttonText('save-setup', 'Save setup', 'Saving...')}</button>
         </form>
       </div>
 
@@ -1426,9 +1583,23 @@
 
       <div class="card wide">
         <h2>Current State</h2>
-        <pre>{pretty({ onboarding: device?.onboarding, setup: setupState, network: network?.config?.client_wifi })}</pre>
+        <div class="summary-grid">
+          {#each setupSummaryItems() as item}
+            <div><small>{item.label}</small><strong>{item.value}</strong></div>
+          {/each}
+        </div>
+        <details class="technical-details"><summary>Technical details</summary><pre>{pretty({ onboarding: device?.onboarding, setup: setupState, network: network?.config?.client_wifi })}</pre></details>
       </div>
-      <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
+      <div class="card wide result-card">
+        <div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div>
+        <div class="summary-grid">
+          {#each resultItems(actionOutput) as item}
+            <div><small>{item.label}</small><strong>{item.value}</strong></div>
+          {/each}
+        </div>
+        {#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}
+        <details class="technical-details"><summary>Technical details</summary><pre>{pretty(actionOutput)}</pre></details>
+      </div>
     </section>
   {:else if activeTab === 'status'}
     <section class="grid">
@@ -1906,6 +2077,82 @@
       <div class="card wide"><h2>Raw MAVLink Config</h2><pre>{pretty(mavlink)}</pre></div>
       <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
     </section>
+  {:else if activeTab === 'tortoisebot'}
+    <section class="grid">
+      <div class="section-block wide">
+        <div class="section-heading">
+          <div>
+            <h2>TortoiseBot Operations</h2>
+            <p>Build, launch, record, and connect the robot to Atlas without repeating SSH command blocks.</p>
+          </div>
+          <button class:busy={isBusy('refresh-tortoisebot')} class="secondary" on:click={() => withBusy('refresh-tortoisebot', refreshTortoisebot)} disabled={Boolean(busyAction)}>{buttonText('refresh-tortoisebot', 'Refresh TortoiseBot', 'Refreshing...')}</button>
+        </div>
+        <div class="readiness-grid">
+          {#each tortoisebotItems() as item}
+            <button class={`readiness-card ${item.state}`} type="button">
+              <small>{item.label}</small>
+              <strong>{item.state === 'ok' ? 'Ready' : item.state === 'bad' ? 'Error' : 'Check'}</strong>
+              <span>{item.detail}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="card wide">
+        <h2>Workspace Operations</h2>
+        <div class="app-grid">
+          {#each tortoisebotOperations() as operation}
+            <article class="app-card">
+              <div class="app-card-title"><strong>{operation.label}</strong><span class="pill">allowlisted</span></div>
+              <p>{operation.description}</p>
+              <button class:busy={isBusy(`tb-${operation.id}`)} on:click={() => runTortoisebotOperation(operation.id)} disabled={Boolean(busyAction)}>{buttonText(`tb-${operation.id}`, operation.label, 'Running...')}</button>
+            </article>
+          {/each}
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Robot Runtime</h2>
+        <div class="summary-grid">
+          <div><small>Launch</small><strong>{tortoisebot?.ros_launch?.active ? 'running' : 'stopped'}</strong></div>
+          <div><small>PID</small><strong>{tortoisebot?.ros_launch?.pid || 'none'}</strong></div>
+          <div><small>Profile</small><strong>{tortoisebot?.ros_launch?.profile || 'tortoisebot-hardware'}</strong></div>
+        </div>
+        <div class="row">
+          <button class:busy={isBusy('start-ros-profile')} on:click={startTortoisebotHardware} disabled={Boolean(busyAction)}>{buttonText('start-ros-profile', 'Start hardware bringup', 'Starting...')}</button>
+          <button class:busy={isBusy('stop-ros-profile')} class="secondary" on:click={stopRosProfile} disabled={Boolean(busyAction)}>{buttonText('stop-ros-profile', 'Stop bringup', 'Stopping...')}</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Atlas ROS Bridge</h2>
+        <div class="summary-grid">
+          <div><small>Status</small><strong>{tortoisebot?.atlas_bridge?.active ? 'running' : 'stopped'}</strong></div>
+          <div><small>PID</small><strong>{tortoisebot?.atlas_bridge?.pid || 'none'}</strong></div>
+        </div>
+        <form on:submit|preventDefault={startAtlasBridge}>
+          <label>Atlas URL<input bind:value={atlasBridgeForm.atlas_url} /></label>
+          <label>Camera topic<input bind:value={atlasBridgeForm.camera_topic} /></label>
+          <label>Command velocity topic<input bind:value={atlasBridgeForm.cmd_vel_topic} /></label>
+          <label>Max video FPS<input bind:value={atlasBridgeForm.max_video_fps} type="number" min="1" max="60" /></label>
+          <div class="row">
+            <button class:busy={isBusy('start-atlas-bridge')} type="submit" disabled={Boolean(busyAction)}>{buttonText('start-atlas-bridge', 'Start Atlas bridge', 'Starting...')}</button>
+            <button class:busy={isBusy('stop-atlas-bridge')} class="secondary" type="button" on:click={stopAtlasBridge} disabled={Boolean(busyAction)}>{buttonText('stop-atlas-bridge', 'Stop Atlas bridge', 'Stopping...')}</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card wide result-card">
+        <div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div>
+        <div class="summary-grid">
+          {#each resultItems(actionOutput) as item}
+            <div><small>{item.label}</small><strong>{item.value}</strong></div>
+          {/each}
+        </div>
+        {#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}
+        <details class="technical-details"><summary>Technical details</summary><pre>{pretty(actionOutput)}</pre></details>
+      </div>
+    </section>
   {:else if activeTab === 'ros'}
     <section class="grid">
       <div class="section-block wide">
@@ -1914,7 +2161,7 @@
             <h2>ROS 2 Runtime</h2>
             <p>Operate ROS launch profiles, topic discovery, graph health, and MCAP recording without terminal commands.</p>
           </div>
-          <button class="secondary" on:click={refreshRos}>Refresh ROS</button>
+          <button class="secondary" on:click={() => withBusy('refresh-ros', refreshRos)} disabled={Boolean(busyAction)}>{buttonText('refresh-ros', 'Refresh ROS', 'Refreshing...')}</button>
         </div>
         <div class="readiness-grid">
           {#each rosItems() as item}
@@ -1940,8 +2187,8 @@
                 <p>{profile.command || 'No command configured.'}</p>
                 <small>{profile.cwd || 'default cwd'}</small>
                 <div class="row">
-                  <button on:click={() => { selectedRosProfile = profile.name; startRosProfile(); }} disabled={profile.enabled === false}>Start</button>
-                  <button class="secondary" on:click={stopRosProfile}>Stop active</button>
+                  <button class:busy={isBusy('start-ros-profile')} on:click={() => { selectedRosProfile = profile.name; startRosProfile(); }} disabled={profile.enabled === false || Boolean(busyAction)}>{buttonText('start-ros-profile', 'Start', 'Starting...')}</button>
+                  <button class:busy={isBusy('stop-ros-profile')} class="secondary" on:click={stopRosProfile} disabled={Boolean(busyAction)}>{buttonText('stop-ros-profile', 'Stop active', 'Stopping...')}</button>
                 </div>
               </article>
             {/each}
@@ -1993,7 +2240,7 @@
         <form on:submit|preventDefault={startRosRecording}>
           <label>Bag name<input bind:value={rosRecordForm.name} placeholder="yari_ros_YYYYMMDD_HHMMSS" /></label>
           <label>Topics<textarea rows="6" bind:value={rosRecordForm.topics} placeholder="Leave blank to record all topics"></textarea></label>
-          <div class="row"><button type="submit">Start MCAP</button><button class="secondary" type="button" on:click={stopRosRecording}>Stop MCAP</button></div>
+          <div class="row"><button class:busy={isBusy('start-ros-recording')} type="submit" disabled={Boolean(busyAction)}>{buttonText('start-ros-recording', 'Start MCAP', 'Starting...')}</button><button class:busy={isBusy('stop-ros-recording')} class="secondary" type="button" on:click={stopRosRecording} disabled={Boolean(busyAction)}>{buttonText('stop-ros-recording', 'Stop MCAP', 'Stopping...')}</button></div>
         </form>
       </div>
 
@@ -2006,9 +2253,16 @@
         {/if}
       </div>
 
-      <div class="card wide"><h2>Raw ROS Status</h2><pre>{pretty(ros)}</pre></div>
-      <div class="card wide"><h2>Raw Topic Status</h2><pre>{pretty(rosTopics)}</pre></div>
-      <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
+      <div class="card wide result-card">
+        <div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div>
+        <div class="summary-grid">
+          {#each resultItems(actionOutput) as item}
+            <div><small>{item.label}</small><strong>{item.value}</strong></div>
+          {/each}
+        </div>
+        {#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}
+      </div>
+      <div class="card wide"><h2>ROS Details</h2><details class="technical-details"><summary>Runtime status</summary><pre>{pretty(ros)}</pre></details><details class="technical-details"><summary>Topic discovery</summary><pre>{pretty(rosTopics)}</pre></details></div>
     </section>
   {:else if activeTab === 'video'}
     <section class="grid">

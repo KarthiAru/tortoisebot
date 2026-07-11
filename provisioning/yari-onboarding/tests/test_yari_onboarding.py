@@ -47,6 +47,13 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.ROS_LAUNCH_PID_FILE = root / "ros-launch.pid"
         self.module.ROS_LAUNCH_LOG_FILE = root / "ros-launch.log"
         self.module.ROS_LAUNCH_STATE_FILE = root / "ros-launch.json"
+        self.module.TORTOISEBOT_WS_DIR = root / "tb_ws"
+        self.module.TORTOISEBOT_OPS_LOG_FILE = root / "tortoisebot-ops.log"
+        self.module.TORTOISEBOT_OPS_STATE_FILE = root / "tortoisebot-ops.json"
+        self.module.ATLAS_BRIDGE_DIR = root / "yari-atlas-ros-bridge"
+        self.module.ATLAS_BRIDGE_PID_FILE = root / "atlas-bridge.pid"
+        self.module.ATLAS_BRIDGE_LOG_FILE = root / "atlas-bridge.log"
+        self.module.ATLAS_BRIDGE_STATE_FILE = root / "atlas-bridge.json"
         self.module.MCAP_DIR = root / "mcap"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
         self.module.OTA_STATE_FILE = root / "ota-state.json"
@@ -1376,6 +1383,26 @@ class YariOnboardingTests(unittest.TestCase):
         result = self.module.start_ros_launch_profile({"profile": "drone-companion"})
         self.assertFalse(result["ok"])
         self.assertIn("command", result["error"])
+
+    def test_default_tortoisebot_launch_profile_enables_logging_camera_and_foxglove(self):
+        profile = self.module.default_ros_launch_profiles()["profiles"][0]
+        self.assertEqual(profile["name"], "tortoisebot-hardware")
+        self.assertIn("record_mcap:=True", profile["command"])
+        self.assertIn("enable_camera:=True", profile["command"])
+        self.assertIn("enable_foxglove_bridge:=True", profile["command"])
+        self.assertIn("foxglove_remote_access:=True", profile["command"])
+
+    def test_tortoisebot_operations_are_allowlisted_and_record_state(self):
+        with self.assertRaises(ValueError):
+            self.module.run_tortoisebot_operation({"action": "rm-rf"})
+
+        result = self.module.run_tortoisebot_operation({"action": "build-bringup"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "build-bringup")
+        self.assertIn("colcon build --packages-select tortoisebot_bringup", " ".join(self.commands[-1]))
+        saved = json.loads(self.module.TORTOISEBOT_OPS_STATE_FILE.read_text())
+        self.assertEqual(saved["action"], "build-bringup")
+        self.assertEqual(saved["returncode"], 0)
 
     def test_ros_launch_profile_rejects_relative_cwd(self):
         self.module.ROS_LAUNCH_CONFIG_FILE.write_text('{"profiles": [{"name": "bad", "command": "echo ok", "cwd": "relative", "enabled": true}]}')

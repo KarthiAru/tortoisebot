@@ -47,6 +47,7 @@ button,
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   min-height: 38px;
   padding: 0 14px;
   border: 1px solid var(--atlas-action);
@@ -56,7 +57,34 @@ button,
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+  transition: transform 80ms ease, background-color 140ms ease, border-color 140ms ease, opacity 140ms ease;
+  user-select: none;
 }
+
+button:hover:not(:disabled),
+.button:hover:not(:disabled) { opacity: 0.92; }
+
+button:active:not(:disabled),
+.button:active:not(:disabled) { transform: translateY(1px) scale(0.99); }
+
+button:disabled,
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+button.busy::before,
+.button.busy::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: spin 720ms linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 button.secondary,
 .button.secondary {
@@ -143,6 +171,7 @@ small { color: var(--atlas-muted); }
 }
 
 .brand { display: flex; align-items: flex-start; gap: 20px; }
+.brand-logo { width: 152px; max-width: 34vw; height: auto; max-height: 34px; object-fit: contain; margin-top: 5px; }
 .brand strong { font-size: 28px; letter-spacing: 0; white-space: nowrap; }
 
 h1,
@@ -518,4 +547,33 @@ button:disabled {
 
 .compact-meta div {
   grid-template-columns: 54px 1fr;
+}
+
+.result-card .summary-grid { margin-bottom: 14px; }
+
+.code-output {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+}
+
+.technical-details {
+  margin-top: 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  background: var(--atlas-surface-raised);
+}
+
+.technical-details summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--atlas-muted);
+  font-weight: 700;
+}
+
+.technical-details pre {
+  padding: 0 12px 12px;
 }

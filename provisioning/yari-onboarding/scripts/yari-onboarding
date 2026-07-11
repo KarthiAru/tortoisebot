@@ -65,6 +65,13 @@ ROS_LAUNCH_CONFIG_FILE = Path(os.environ.get("YARI_ROS_LAUNCH_CONFIG_FILE", "/et
 ROS_LAUNCH_PID_FILE = STATE_DIR / "ros-launch.pid"
 ROS_LAUNCH_LOG_FILE = STATE_DIR / "ros-launch.log"
 ROS_LAUNCH_STATE_FILE = STATE_DIR / "ros-launch.json"
+TORTOISEBOT_WS_DIR = Path(os.environ.get("YARI_TORTOISEBOT_WS_DIR", f"/home/{ONBOARDING_USER}/tb_ws"))
+TORTOISEBOT_OPS_LOG_FILE = STATE_DIR / "tortoisebot-ops.log"
+TORTOISEBOT_OPS_STATE_FILE = STATE_DIR / "tortoisebot-ops.json"
+ATLAS_BRIDGE_DIR = Path(os.environ.get("YARI_ATLAS_BRIDGE_DIR", f"/home/{ONBOARDING_USER}/yari-atlas-ros-bridge"))
+ATLAS_BRIDGE_PID_FILE = STATE_DIR / "atlas-bridge.pid"
+ATLAS_BRIDGE_LOG_FILE = STATE_DIR / "atlas-bridge.log"
+ATLAS_BRIDGE_STATE_FILE = STATE_DIR / "atlas-bridge.json"
 VIDEO_CONFIG_FILE = Path(os.environ.get("YARI_VIDEO_CONFIG_FILE", "/etc/yari/video.json"))
 APP_MANIFEST_DIR = Path(os.environ.get("YARI_APP_MANIFEST_DIR", "/etc/yari/apps.d"))
 APP_REGISTRY_DIR = Path(os.environ.get("YARI_APP_REGISTRY_DIR", "/opt/yari/onboarding/apps/examples"))
@@ -2460,7 +2467,7 @@ def default_ros_launch_profiles():
             {
                 "name": "tortoisebot-hardware",
                 "label": "TortoiseBot hardware bringup",
-                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=True record_mcap:=False",
+                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=True record_mcap:=True enable_camera:=True enable_foxglove_bridge:=True foxglove_remote_access:=True",
                 "cwd": "/home/tortoisebot/tb_ws",
                 "setup": "/home/tortoisebot/tb_ws/install/setup.bash",
                 "enabled": True,
@@ -2573,6 +2580,177 @@ def stop_ros_launch_profile():
     ROS_LAUNCH_STATE_FILE.write_text(json.dumps(status, indent=2) + "\n")
     os.chmod(ROS_LAUNCH_STATE_FILE, 0o600)
     return {"ok": True, "launch": status}
+
+
+def command_tail(value, limit=80):
+    if not value:
+        return ""
+    lines = str(value).splitlines()
+    return "\n".join(lines[-limit:])
+
+
+def tortoisebot_operations():
+    tb_ws = str(TORTOISEBOT_WS_DIR)
+    atlas_root = str(ATLAS_BRIDGE_DIR)
+    atlas_ros = str(ATLAS_BRIDGE_DIR / "ros2")
+    return {
+        "build-bringup": {
+            "label": "Build TortoiseBot bringup",
+            "description": "Run colcon build for tortoisebot_bringup in ~/tb_ws.",
+            "timeout": 900,
+            "command": f"source /opt/ros/humble/setup.bash && cd {sh_quote(tb_ws)} && colcon build --packages-select tortoisebot_bringup",
+        },
+        "sync-atlas-bridge": {
+            "label": "Pull Atlas ROS bridge",
+            "description": "Fetch and fast-forward yari-atlas-ros-bridge from origin/main.",
+            "timeout": 180,
+            "command": f"cd {sh_quote(atlas_root)} && git fetch origin && git pull --ff-only origin main",
+        },
+        "build-atlas-bridge": {
+            "label": "Build Atlas ROS bridge",
+            "description": "Run colcon build for yari_atlas_ros2_bridge.",
+            "timeout": 900,
+            "command": f"source /opt/ros/humble/setup.bash && cd {sh_quote(atlas_ros)} && colcon build --packages-select yari_atlas_ros2_bridge",
+        },
+    }
+
+
+def tortoisebot_operation_status():
+    state = read_json_file(TORTOISEBOT_OPS_STATE_FILE, {})
+    return {
+        "last_operation": state,
+        "log_file": str(TORTOISEBOT_OPS_LOG_FILE),
+        "available_operations": [
+            {"id": key, "label": item["label"], "description": item["description"]}
+            for key, item in tortoisebot_operations().items()
+        ],
+    }
+
+
+def run_tortoisebot_operation(payload):
+    action = str(payload.get("action") or "").strip()
+    operations = tortoisebot_operations()
+    if action not in operations:
+        raise ValueError("unknown TortoiseBot operation")
+    operation = operations[action]
+    TORTOISEBOT_OPS_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    started = int(time.time())
+    with TORTOISEBOT_OPS_LOG_FILE.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n==> {operation['label']} started at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started))}\n")
+    result = command_output(["bash", "-lc", operation["command"]], timeout=int(operation.get("timeout", 300)))
+    finished = int(time.time())
+    state = {
+        "action": action,
+        "label": operation["label"],
+        "ok": result["ok"],
+        "returncode": result["returncode"],
+        "started": started,
+        "finished": finished,
+        "duration_sec": finished - started,
+        "stdout_tail": command_tail(result.get("stdout"), 60),
+        "stderr_tail": command_tail(result.get("stderr"), 60),
+        "log_file": str(TORTOISEBOT_OPS_LOG_FILE),
+    }
+    with TORTOISEBOT_OPS_LOG_FILE.open("a", encoding="utf-8") as handle:
+        if result.get("stdout"):
+            handle.write(result["stdout"])
+            if not result["stdout"].endswith("\n"):
+                handle.write("\n")
+        if result.get("stderr"):
+            handle.write(result["stderr"])
+            if not result["stderr"].endswith("\n"):
+                handle.write("\n")
+        handle.write(f"==> {operation['label']} finished with code {result['returncode']}\n")
+    TORTOISEBOT_OPS_STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    os.chmod(TORTOISEBOT_OPS_STATE_FILE, 0o600)
+    return state
+
+
+def atlas_bridge_status():
+    state = read_json_file(ATLAS_BRIDGE_STATE_FILE, {"active": False})
+    pid = None
+    try:
+        pid = int(ATLAS_BRIDGE_PID_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        pass
+    active = bool(pid and process_running(pid))
+    if state.get("active") and not active:
+        state["active"] = False
+        state["message"] = "Atlas bridge process is not running"
+    state.update({"active": active, "pid": pid, "log_file": str(ATLAS_BRIDGE_LOG_FILE)})
+    return state
+
+
+def start_atlas_bridge(payload):
+    status = atlas_bridge_status()
+    if status.get("active"):
+        return {"ok": True, "bridge": status, "message": "Atlas ROS bridge is already running"}
+    atlas_url = str(payload.get("atlas_url") or "http://192.168.0.181:8100/api/v1").strip()
+    camera_topic = str(payload.get("camera_topic") or "/camera/image_raw/compressed").strip()
+    cmd_vel_topic = str(payload.get("cmd_vel_topic") or "/cmd_vel").strip()
+    max_video_fps = float(payload.get("max_video_fps") or 15.0)
+    cwd = ATLAS_BRIDGE_DIR / "ros2"
+    setup = cwd / "install" / "setup.bash"
+    if not cwd.exists():
+        return {"ok": False, "error": f"Atlas ROS bridge workspace not found: {cwd}"}
+    ATLAS_BRIDGE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    command = " ".join([
+        "ros2 run yari_atlas_ros2_bridge yari-atlas-ros2-bridge",
+        "--ros-args",
+        f"-p atlas_url:={sh_quote(atlas_url)}",
+        f"-p camera_topic:={sh_quote(camera_topic)}",
+        f"-p cmd_vel_topic:={sh_quote(cmd_vel_topic)}",
+        f"-p max_video_fps:={max_video_fps}",
+    ])
+    shell_cmd = f"source /opt/ros/humble/setup.bash 2>/dev/null || true; source {sh_quote(str(setup))} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
+    log_handle = ATLAS_BRIDGE_LOG_FILE.open("ab")
+    proc = subprocess.Popen(["bash", "-lc", shell_cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    ATLAS_BRIDGE_PID_FILE.write_text(str(proc.pid) + "\n")
+    state = {
+        "active": True,
+        "pid": proc.pid,
+        "atlas_url": atlas_url,
+        "camera_topic": camera_topic,
+        "cmd_vel_topic": cmd_vel_topic,
+        "max_video_fps": max_video_fps,
+        "started": int(time.time()),
+        "command": command,
+    }
+    ATLAS_BRIDGE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ATLAS_BRIDGE_STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    os.chmod(ATLAS_BRIDGE_STATE_FILE, 0o600)
+    return {"ok": True, "bridge": atlas_bridge_status()}
+
+
+def stop_atlas_bridge():
+    status = atlas_bridge_status()
+    pid = status.get("pid")
+    if pid and status.get("active"):
+        try:
+            os.killpg(int(pid), signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            os.kill(int(pid), signal.SIGINT)
+        time.sleep(1)
+    ATLAS_BRIDGE_PID_FILE.unlink(missing_ok=True)
+    status = atlas_bridge_status()
+    status["active"] = False
+    status["stopped"] = int(time.time())
+    ATLAS_BRIDGE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ATLAS_BRIDGE_STATE_FILE.write_text(json.dumps(status, indent=2) + "\n")
+    os.chmod(ATLAS_BRIDGE_STATE_FILE, 0o600)
+    return {"ok": True, "bridge": status}
+
+
+def tortoisebot_status():
+    return {
+        "workspace": str(TORTOISEBOT_WS_DIR),
+        "atlas_bridge_workspace": str(ATLAS_BRIDGE_DIR),
+        "ros_launch": ros_launch_status(),
+        "atlas_bridge": atlas_bridge_status(),
+        "operations": tortoisebot_operation_status(),
+    }
 
 
 def ros_status():
