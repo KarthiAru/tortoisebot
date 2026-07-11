@@ -69,6 +69,8 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. Build the deployable static bundle with `provisioning/yari-onboarding/scripts/build-yari-portal`; it runs `npm ci`, `npm run build`, verifies `portal-version.json`, `portal-assets.json`, and precompressed `.gz` assets, then leaves the runtime artifact in `portal/dist`. The robot does not need Node.js at runtime after installation: the normal installer path copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist` is missing or stale, build it on a development machine or in the image build pipeline before installing. On-device portal builds are an explicit maintenance escape hatch: run the installer with `YARI_PORTAL_BUILD_ON_DEVICE=1` to let it use existing Node.js/npm or bootstrap Node.js 20 through apt/NodeSource.
 
+When building from WSL, use Linux Node.js/npm installed inside WSL. Do not rely on Windows `npm` from `/mnt/c` or a `\\wsl.localhost` UNC working directory; the helper detects that mismatch and stops with a targeted error because Vite/npm otherwise fail with misleading missing `index.html` or `tsconfig.json` messages.
+
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
 - Keep the visual language compact, operational, border-led, and mostly neutral.

@@ -21,9 +21,30 @@ node_major_version() {
   node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0
 }
 
+command_path() {
+  command -v "$1" 2>/dev/null || true
+}
+
+is_windows_mount_path() {
+  case "$1" in
+    /mnt/[a-zA-Z]/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+windows_node_hint() {
+  local node_path npm_path
+  node_path="$(command_path node)"
+  npm_path="$(command_path npm)"
+  if is_windows_mount_path "${node_path}" || is_windows_mount_path "${npm_path}"; then
+    die "Detected Windows Node/npm on PATH while building from WSL (${node_path:-node missing} ${npm_path:-npm missing}). Install Linux Node.js >= ${MIN_NODE_MAJOR} inside WSL/Ubuntu, or build from a native Windows checkout instead of \\wsl.localhost."
+  fi
+}
+
 require_build_tools() {
-  command -v node >/dev/null 2>&1 || die "Node.js is required to build the Svelte YARI OS portal. Install Node.js >= ${MIN_NODE_MAJOR}."
-  command -v npm >/dev/null 2>&1 || die "npm is required to build the Svelte YARI OS portal. Install Node.js/npm."
+  windows_node_hint
+  command -v node >/dev/null 2>&1 || die "Node.js is required to build the Svelte YARI OS portal. Install Linux Node.js >= ${MIN_NODE_MAJOR}."
+  command -v npm >/dev/null 2>&1 || die "npm is required to build the Svelte YARI OS portal. Install Linux Node.js/npm."
 
   local major
   major="$(node_major_version)"

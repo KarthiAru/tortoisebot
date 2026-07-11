@@ -89,6 +89,14 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("portal-assets.json", text)
         self.assertIn("precompressed .gz assets", text)
 
+    def test_portal_build_helper_rejects_windows_node_from_wsl(self):
+        text = PORTAL_BUILD_HELPER.read_text(encoding="utf-8")
+        self.assertIn("is_windows_mount_path", text)
+        self.assertIn("/mnt/[a-zA-Z]/*", text)
+        self.assertIn("Detected Windows Node/npm on PATH while building from WSL", text)
+        self.assertIn("Install Linux Node.js", text)
+        self.assertLess(text.index("windows_node_hint"), text.index("command -v node"))
+
     def test_image_builder_and_installer_use_shared_portal_build_helper(self):
         image_text = IMAGE_SCRIPT.read_text(encoding="utf-8")
         installer_text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
