@@ -151,6 +151,16 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("DeclareLaunchArgument('enable_slam'", launch_text)
         self.assertIn("DeclareLaunchArgument('enable_navigation'", launch_text)
 
+    def test_atlas_bridge_uses_persisted_vehicle_token_without_leaking_it_to_state(self):
+        text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        self.assertIn("portal_secrets = read_json_file(PORTAL_SECRETS_FILE, {})", text)
+        self.assertIn("portal_secrets.get(\"atlas_token\")", text)
+        self.assertIn("YARI_ATLAS_VEHICLE_TOKEN", text)
+        self.assertIn("Atlas vehicle token is not configured", text)
+        self.assertIn("vehicle_token_configured", text)
+        self.assertIn("env=env", text)
+        self.assertNotIn("vehicle_token:=", text)
+
     def test_ros_launch_and_bridge_run_as_onboarding_user_and_expose_logs(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn("def user_shell_command", text)

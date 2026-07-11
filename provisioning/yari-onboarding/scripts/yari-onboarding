@@ -2708,7 +2708,10 @@ def start_atlas_bridge(payload):
     status = atlas_bridge_status()
     if status.get("active"):
         return {"ok": True, "bridge": status, "message": "Atlas ROS bridge is already running"}
-    atlas_url = str(payload.get("atlas_url") or "http://192.168.0.181:8100/api/v1").strip()
+    portal_config = read_json_file(PORTAL_CONFIG_FILE, {})
+    portal_secrets = read_json_file(PORTAL_SECRETS_FILE, {})
+    atlas_url = str(payload.get("atlas_url") or portal_config.get("atlas_url") or "http://192.168.0.181:8100/api/v1").strip()
+    vehicle_token = str(payload.get("vehicle_token") or portal_secrets.get("atlas_token") or "").strip()
     camera_topic = str(payload.get("camera_topic") or "/camera/image_raw/compressed").strip()
     cmd_vel_topic = str(payload.get("cmd_vel_topic") or "/cmd_vel").strip()
     max_video_fps = float(payload.get("max_video_fps") or 15.0)
@@ -2716,6 +2719,11 @@ def start_atlas_bridge(payload):
     setup = cwd / "install" / "setup.bash"
     if not cwd.exists():
         return {"ok": False, "error": f"Atlas ROS bridge workspace not found: {cwd}"}
+    if not vehicle_token:
+        return {
+            "ok": False,
+            "error": "Atlas vehicle token is not configured. Save the Atlas device token in Setup, then start the Atlas bridge again.",
+        }
     ATLAS_BRIDGE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     command = " ".join([
         "ros2 run yari_atlas_ros2_bridge yari-atlas-ros2-bridge",
@@ -2727,12 +2735,15 @@ def start_atlas_bridge(payload):
     ])
     shell_cmd = f"source /opt/ros/humble/setup.bash 2>/dev/null || true; source {sh_quote(str(setup))} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
     log_handle = ATLAS_BRIDGE_LOG_FILE.open("ab")
-    proc = subprocess.Popen(user_shell_command(shell_cmd), stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    env = os.environ.copy()
+    env["YARI_ATLAS_VEHICLE_TOKEN"] = vehicle_token
+    proc = subprocess.Popen(user_shell_command(shell_cmd), stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True, env=env)
     ATLAS_BRIDGE_PID_FILE.write_text(str(proc.pid) + "\n")
     state = {
         "active": True,
         "pid": proc.pid,
         "atlas_url": atlas_url,
+        "vehicle_token_configured": True,
         "camera_topic": camera_topic,
         "cmd_vel_topic": cmd_vel_topic,
         "max_video_fps": max_video_fps,
