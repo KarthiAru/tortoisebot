@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-07-11T09:41:30.290Z",
+  "asset_count": 8,
+  "total_bytes": 206035,
+  "assets": [
+    {
+      "path": "assets/yari-portal-hKUVB3Ut.css",
+      "bytes": 11907,
+      "sha256": "bfb10c06564498835d4149a0da2fff057edbb7752553828d06782a1acfbb22f2",
+      "gzip": false
+    },
+    {
+      "path": "assets/yari-portal-hKUVB3Ut.css.gz",
+      "bytes": 3150,
+      "sha256": "e2f43846f22eb564228f448aeaeead623893e0cd2131e6bec839a1d4372028a2",
+      "gzip": true
+    },
+    {
+      "path": "assets/yari-portal-MSt8eG3n.js",
+      "bytes": 145224,
+      "sha256": "3916b89fb568999bbb5265843be5407ed2fd1bec16b33578913fea304ec34838",
+      "gzip": false
+    },
+    {
+      "path": "assets/yari-portal-MSt8eG3n.js.gz",
+      "bytes": 44642,
+      "sha256": "cece9b57eea00572dda643393247abb272d5f14ec4d6436a73428b1b3a9f504f",
+      "gzip": true
+    },
+    {
+      "path": "index.html",
+      "bytes": 468,
+      "sha256": "c7a9564997bd29ce8bf9871a971c5370415a9c76c8d112d0bd93dfdb32e89132",
+      "gzip": false
+    },
+    {
+      "path": "index.html.gz",
+      "bytes": 297,
+      "sha256": "86d26db1a1832c5fd423884f4e83f85322144024be3ea782f5bc692c34f5c803",
+      "gzip": true
+    },
+    {
+      "path": "portal-version.json",
+      "bytes": 186,
+      "sha256": "ff520a2ad66215d69c14bb3145c44ba41c01455dc8dfbb0144137b42331d6c20",
+      "gzip": false
+    },
+    {
+      "path": "portal-version.json.gz",
+      "bytes": 161,
+      "sha256": "0d7525fd80ad01ce74f0e1a4e803b4ef19c811953f6d0c5c643fb28f3aff55c0",
+      "gzip": true
+    }
+  ]
+}
