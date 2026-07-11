@@ -118,6 +118,12 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("stop_ros_recording()", server_text)
         self.assertIn("stop_atlas_bridge()", server_text)
 
+    def test_security_status_has_persistent_portal_api_token_file(self):
+        text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        self.assertIn("PORTAL_API_TOKEN_FILE = Path", text)
+        self.assertIn("portal-api-token.json", text)
+        self.assertLess(text.index("PORTAL_API_TOKEN_FILE = Path"), text.index("def generated_portal_api_token"))
+        self.assertIn("credential_file_status(PORTAL_API_TOKEN_FILE)", text)
     def test_ros_launch_and_bridge_run_as_onboarding_user_and_expose_logs(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn("def user_shell_command", text)

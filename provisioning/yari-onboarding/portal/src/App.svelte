@@ -826,7 +826,9 @@
     const state = setupState?.state || setupState || device?.onboarding || {};
     const configuredSsid = network?.config?.client_wifi?.configured_ssid || setupForm.ssid || 'not set';
     const sshConfigured = Boolean(setupState?.ssh?.authorized_keys || setupState?.ssh?.password_enabled || setupForm.ssh_key || setupForm.ssh_password);
-    const tokensConfigured = Boolean(setupState?.tokens?.atlas || setupState?.tokens?.foxglove || setupForm.atlas_token || setupForm.foxglove_token);
+    const atlasToken = setupState?.atlas_token || setupState?.tokens?.atlas_token;
+    const foxgloveToken = setupState?.foxglove_token || setupState?.tokens?.foxglove_token;
+    const tokensConfigured = Boolean(atlasToken?.configured || foxgloveToken?.configured || setupForm.atlas_token || setupForm.foxglove_token);
     return [
       {
         label: 'Wi-Fi',
@@ -846,7 +848,7 @@
       {
         label: 'Cloud Pairing',
         state: tokensConfigured ? 'ok' : 'warn',
-        detail: tokensConfigured ? 'tokens provided' : 'Atlas/Foxglove tokens optional',
+        detail: tokensConfigured ? 'tokens persisted' : 'Atlas/Foxglove tokens optional',
       },
       {
         label: 'State',

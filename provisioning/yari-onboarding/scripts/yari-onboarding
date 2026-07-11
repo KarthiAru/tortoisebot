@@ -91,6 +91,7 @@ FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE"
 PORTAL_VERSION_FILE = WEB_DIR / "portal-version.json"
 PORTAL_ASSETS_FILE = WEB_DIR / "portal-assets.json"
 PORTAL_API_TOKEN = os.environ.get("YARI_PORTAL_API_TOKEN", "")
+PORTAL_API_TOKEN_FILE = Path(os.environ.get("YARI_PORTAL_API_TOKEN_FILE", str(STATE_DIR / "portal-api-token.json")))
 
 SERVICE_ALLOWLIST = {
     "yari-onboarding": "yari-onboarding.service",
