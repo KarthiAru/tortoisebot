@@ -164,6 +164,16 @@
     return Array.isArray(items) && items.length > 0 ? items.join(', ') : fallback;
   }
 
+  function appAutostartText(app: AnyRecord) {
+    const statuses = Array.isArray(app.service_status) ? app.service_status : [];
+    if (app.runtime === 'container') return 'container restart policy';
+    if (statuses.length === 0) return 'not managed';
+    const enabled = statuses.filter((item: AnyRecord) => item.enabled === 'enabled').length;
+    if (enabled === statuses.length) return 'enabled';
+    if (enabled > 0) return `${enabled}/${statuses.length} enabled`;
+    return statuses.map((item: AnyRecord) => item.enabled || 'unknown').join(', ');
+  }
+
   function formatBytes(value: unknown) {
     const bytes = Number(value || 0);
     if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -2245,6 +2255,7 @@
                 <div><dt>Readiness</dt><dd>{app.readiness?.message || 'unknown'}</dd></div>
                 <div><dt>Healthcheck</dt><dd>{app.healthcheck_status?.state || 'not configured'}</dd></div>
                 <div><dt>Services</dt><dd>{listText(app.services)}</dd></div>
+                <div><dt>Autostart</dt><dd>{appAutostartText(app)}</dd></div>
                 <div><dt>Ports</dt><dd>{listText((app.ports || []).map(formatPort))}</dd></div>
                 <div><dt>Permission risk</dt><dd><span class={`status-pill ${permissionRiskClass(app)}`}>{permissionRiskLabel(app)}</span></dd></div>
                 <div><dt>Permissions</dt><dd>{listText(app.permissions)}</dd></div>
@@ -2258,6 +2269,8 @@
                 <button class="secondary" disabled={!app.actions?.start} on:click={() => appAction(app.id, 'start')}>Start</button>
                 <button class="secondary" disabled={!app.actions?.stop} on:click={() => appAction(app.id, 'stop')}>Stop</button>
                 <button class="secondary" disabled={!app.actions?.restart} on:click={() => appAction(app.id, 'restart')}>Restart</button>
+                <button class="secondary" disabled={!app.actions?.enable} on:click={() => appAction(app.id, 'enable')}>Enable boot</button>
+                <button class="secondary" disabled={!app.actions?.disable} on:click={() => appAction(app.id, 'disable')}>Disable boot</button>
                 <button class="secondary" disabled={!app.actions?.logs} on:click={() => appLogs(app.id)}>Logs</button>
                 {#if app.update?.update_available}<button class="secondary" disabled={!app.actions?.update} on:click={() => updateInstalledApp(app.id)}>Apply update</button>{/if}
                 <button class="secondary" disabled={!app.actions?.uninstall} on:click={() => uninstallApp(app.id)}>Uninstall</button>

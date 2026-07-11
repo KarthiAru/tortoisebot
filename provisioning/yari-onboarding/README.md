@@ -60,7 +60,7 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 ## Web UI Stack Direction
 
-The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. Build the deployable static bundle with `provisioning/yari-onboarding/scripts/build-yari-portal`; it runs `npm ci`, `npm run build`, verifies `portal-version.json`, `portal-assets.json`, and precompressed `.gz` assets, then leaves the runtime artifact in `portal/dist`. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist/index.html` is missing, the installer first uses existing Node.js/npm when Node is version 18 or newer; otherwise it attempts to install Node.js 20 through apt/NodeSource. If build tools still are not available, installation fails with an explicit build requirement.
+The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. Build the deployable static bundle with `provisioning/yari-onboarding/scripts/build-yari-portal`; it runs `npm ci`, `npm run build`, verifies `portal-version.json`, `portal-assets.json`, and precompressed `.gz` assets, then leaves the runtime artifact in `portal/dist`. The robot does not need Node.js at runtime after installation: the normal installer path copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist` is missing or stale, build it on a development machine or in the image build pipeline before installing. On-device portal builds are an explicit maintenance escape hatch: run the installer with `YARI_PORTAL_BUILD_ON_DEVICE=1` to let it use existing Node.js/npm or bootstrap Node.js 20 through apt/NodeSource.
 
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
@@ -78,7 +78,7 @@ sudo provisioning/yari-onboarding/scripts/install-yari-onboarding
 sudo systemctl restart yari-onboarding.service
 ```
 
-For fresh image builds, `provisioning/scripts/build_tortoisebot_image.sh` calls the same helper before writing `/opt/yari/onboarding/web` into the root filesystem. For on-device updates, `install-yari-onboarding` uses an existing `portal/dist` when present or bootstraps Node.js 20 and runs the same helper when a build is missing.
+For fresh image builds, `provisioning/scripts/build_tortoisebot_image.sh` calls the same helper before writing `/opt/yari/onboarding/web` into the root filesystem. For on-device updates, `install-yari-onboarding` uses an existing `portal/dist`; use `YARI_PORTAL_BUILD_ON_DEVICE=1 sudo -E provisioning/yari-onboarding/scripts/install-yari-onboarding` only when you intentionally want to build the portal on the robot.
 
 Recommended evolution:
 
@@ -122,7 +122,7 @@ YARI app manifests are versioned JSON files. The schema lives at `apps/manifest.
 Manifest runtimes:
 
 - `core-service`: YARI-owned systemd units baked into the base OS, such as Foxglove Bridge, Atlas Agent, MAVLink Router, ROS 2 Manager, Video Manager, and Log Manager.
-- `service-bundle`: an app represented by one or more systemd units already installed on the device. The current backend can install/update their manifests, uninstall external manifests, start, stop, restart, and tail logs for declared services.
+- `service-bundle`: an app represented by one or more systemd units already installed on the device. The current backend can install/update their manifests, uninstall external manifests, start, stop, restart, enable/disable boot autostart, and tail logs for declared services.
 - `container`: a future YARI app runtime backed by Docker/Podman. The current backend can install/update and uninstall these manifests, detects Docker/Podman availability, shows container status, and can start/stop/restart a safe first subset of container apps from manifest metadata. Bundled local registry manifests under `/opt/yari/onboarding/apps/examples` can be installed from the portal; Atlas registry install/update orchestration is still planned. The Svelte portal presents this as an operator workflow with recommended apps, installed app cards, registry install/update cards, health metadata, and app logs, while keeping raw manifest JSON as a support/development path.
 
 Minimal service-bundle manifest:
@@ -394,7 +394,7 @@ By default, development images keep the local portal API open on the device LAN/
 | `POST /api/apps/validate` | Normalize and validate an external YARI App Manifest v1 JSON file without persisting it. |
 | `POST /api/apps/install` | Install or update a validated external YARI App Manifest v1 JSON file into `/etc/yari/apps.d`. Built-in app IDs cannot be replaced. |
 | `POST /api/apps/<id>/uninstall` | Remove an external manifest from `/etc/yari/apps.d`; built-in apps cannot be removed. |
-| `POST /api/apps/<id>/start` | Start services declared by an app manifest. Also supports `stop` and `restart`. Container lifecycle actions are enabled when Docker or Podman is installed and the manifest has a valid `container.image`. |
+| `POST /api/apps/<id>/start` | Start services declared by an app manifest. Also supports `stop`, `restart`, `enable`, and `disable` for service-bundle autostart. Container lifecycle actions are enabled when Docker or Podman is installed and the manifest has a valid `container.image`; container autostart is controlled by restart policy rather than systemd enable/disable. |
 | `GET /api/apps/<id>/logs` | Tail journal logs for services declared by an app manifest. |
 | `GET /api/logs` | Log source registry and support bundle endpoint. |
 | `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |

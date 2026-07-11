@@ -921,6 +921,13 @@ class YariOnboardingTests(unittest.TestCase):
         result = self.module.app_action("ros2-manager", "restart")
         self.assertTrue(result["ok"])
         self.assertIn(["systemctl", "restart", "yari-ros.service"], self.commands)
+        enable = self.module.app_action("ros2-manager", "enable")
+        self.assertTrue(enable["ok"])
+        self.assertEqual(enable["action"], "enable")
+        self.assertIn(["systemctl", "enable", "yari-ros.service"], self.commands)
+        disable = self.module.app_action("ros2-manager", "disable")
+        self.assertTrue(disable["ok"])
+        self.assertIn(["systemctl", "disable", "yari-ros.service"], self.commands)
         with self.assertRaises(ValueError):
             self.module.app_action("missing-app", "start")
         self.module.APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -995,6 +1002,9 @@ class YariOnboardingTests(unittest.TestCase):
         })
         with self.assertRaises(ValueError):
             self.module.app_action("camera-streamer", "start")
+        self.module.has_command = lambda name: name in {"docker", "nmcli"}
+        with self.assertRaises(ValueError):
+            self.module.app_action("camera-streamer", "enable")
 
     def test_container_app_action_builds_runtime_command(self):
         self.module.has_command = lambda name: name in {"docker", "nmcli"}

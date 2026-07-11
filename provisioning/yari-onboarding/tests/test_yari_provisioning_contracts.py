@@ -60,15 +60,19 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
         self.assertIn("portal_dist_stale", text)
         self.assertIn("YARI_PORTAL_FORCE_BUILD", text)
+        self.assertIn("YARI_PORTAL_BUILD_ON_DEVICE", text)
+        self.assertIn("Build it on a development machine first", text)
         self.assertIn("${PORTAL_SRC}/src", text)
         self.assertIn("${PORTAL_SRC}/package-lock.json", text)
         self.assertIn("-newer \"${PORTAL_DIST}/portal-version.json\"", text)
         self.assertIn("Building Svelte YARI OS portal", text)
         self.assertLess(text.index("portal_dist_stale"), text.index("ensure_portal_dist"))
         self.assertLess(text.index("find \"${source_paths[@]}\""), text.rindex("return 1"))
+        self.assertLess(text.index("YARI_PORTAL_BUILD_ON_DEVICE"), text.index("if ! install_node20_build_tools"))
 
-    def test_onboarding_installer_refreshes_nodesource_keyring_before_node_install(self):
+    def test_onboarding_installer_refreshes_nodesource_keyring_before_opt_in_node_install(self):
         text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("YARI_PORTAL_BUILD_ON_DEVICE", text)
         self.assertIn("rm -f /etc/apt/sources.list.d/nodesource.list", text)
         self.assertIn("rm -f /etc/apt/keyrings/nodesource.gpg", text)
         self.assertIn("gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg", text)

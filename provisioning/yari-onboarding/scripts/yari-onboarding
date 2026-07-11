@@ -1667,6 +1667,8 @@ def enrich_app(app, registry_app=None):
         "start": can_run,
         "stop": can_run,
         "restart": can_run,
+        "enable": app.get("runtime") != "container" and can_run,
+        "disable": app.get("runtime") != "container" and can_run,
         "logs": bool(app["service_status"]) or (app.get("runtime") == "container" and can_run),
         "update": bool(app["update"].get("update_available")),
     }
@@ -2257,10 +2259,12 @@ def container_app_action(app, action):
 
 
 def app_action(app_id, action):
-    if action not in {"start", "stop", "restart"}:
+    if action not in {"start", "stop", "restart", "enable", "disable"}:
         raise ValueError(f"Unsupported app action '{action}'")
     app = app_by_id(app_id)
     if app.get("runtime") == "container":
+        if action in {"enable", "disable"}:
+            raise ValueError("Container app autostart is controlled by the container restart policy")
         return container_app_action(app, action)
     results = []
     for service in app.get("services", []):
@@ -3682,7 +3686,7 @@ class Handler(SimpleHTTPRequestHandler):
             if app_update_match:
                 self.send_json(200, update_installed_app(app_update_match.group(1)))
                 return
-            app_match = re.match(r"^/api/apps/([^/]+)/(start|stop|restart)$", path)
+            app_match = re.match(r"^/api/apps/([^/]+)/(start|stop|restart|enable|disable)$", path)
             if app_match:
                 self.send_json(200, app_action(app_match.group(1), app_match.group(2)))
                 return

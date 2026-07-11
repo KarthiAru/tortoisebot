@@ -112,9 +112,17 @@ ensure_portal_dist() {
     return 0
   fi
 
+  if [[ "${YARI_PORTAL_BUILD_ON_DEVICE:-0}" != "1" ]]; then
+    echo "Svelte portal build is missing or stale." >&2
+    echo "Build it on a development machine first:" >&2
+    echo "  provisioning/yari-onboarding/scripts/build-yari-portal" >&2
+    echo "Then rerun this installer, or set YARI_PORTAL_BUILD_ON_DEVICE=1 to build on this device." >&2
+    exit 1
+  fi
+
   if ! install_node20_build_tools; then
     echo "Svelte portal build is missing or stale and Node.js >= 18/npm are not available." >&2
-    echo "Install Node.js 20, or build provisioning/yari-onboarding/portal/dist before running this installer." >&2
+    echo "Install Node.js 20, build provisioning/yari-onboarding/portal/dist before running this installer, or use the image build flow." >&2
     exit 1
   fi
   echo "Building Svelte YARI OS portal from ${PORTAL_SRC}"
