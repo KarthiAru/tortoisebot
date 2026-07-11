@@ -27,6 +27,10 @@ sudo apt-get install -y network-manager avahi-daemon libnss-mdns
 
 NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Jetson Orin, mini PCs, and other Ubuntu edge devices. Avahi and `libnss-mdns` provide the advertised `http://<hostname>.local` portal address on typical LANs. On Ubuntu Server images without NetworkManager, the service falls back to `wpa_supplicant` AP mode and `systemd-networkd` DHCP when those tools are available.
 
+## Setup AP Credentials
+
+Development images may leave the setup AP open by keeping `YARI_ONBOARDING_AP_PASSWORD` empty or setting it to `open`. Production images should not use an open setup AP. Set `YARI_ONBOARDING_AP_PASSWORD=auto` to generate a persistent per-device setup password under `/var/lib/yari/onboarding/setup-ap-credentials.json` with `0600` permissions, or set it to an explicit WPA password of at least 8 characters. The local API and state files report only sanitized AP status such as `open`, `configured`, or `generated`; they do not expose the password. Image/factory tooling can read the credential file to print a QR code or device label.
+
 ## Installed Files
 
 ```text

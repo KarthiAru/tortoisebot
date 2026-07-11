@@ -149,6 +149,10 @@ if [[ ! -f /etc/yari/onboarding.env ]]; then
 # Optional production hardening. When set, all mutating portal API calls
 # require X-YARI-Token or Authorization: Bearer with this value.
 # YARI_PORTAL_API_TOKEN=change-me-per-device
+
+# Setup AP security. Use empty/open for development only. Use auto for
+# a persistent generated per-device password stored under /var/lib/yari/onboarding.
+# YARI_ONBOARDING_AP_PASSWORD=auto
 ENV
   chmod 0600 /etc/yari/onboarding.env
 fi

@@ -54,6 +54,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.OTA_ARTIFACT_DIR = root / "ota-artifacts"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
+        self.module.SETUP_AP_CREDENTIAL_FILE = root / "setup-ap-credentials.json"
         self.module.HOSTNAME_FILE = root / "hostname"
         self.module.DEVICE_MODEL_PATHS = [root / "device-model"]
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
@@ -107,6 +108,39 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(self.module.normalize_form_value('"Brindavan"'), "Brindavan")
         self.assertEqual(self.module.normalize_form_value("'secret'"), "secret")
         self.assertEqual(self.module.normalize_form_value('pa"ss'), 'pa"ss')
+
+    def test_setup_ap_password_modes_are_sanitized_and_persistent(self):
+        self.module.AP_PASSWORD = ""
+        open_status = self.module.setup_ap_status()
+        self.assertEqual(open_status["security"], "open")
+        self.assertFalse(open_status["password_configured"])
+        self.assertFalse(self.module.SETUP_AP_CREDENTIAL_FILE.exists())
+
+        self.module.AP_PASSWORD = "staticpass123"
+        static_status = self.module.setup_ap_status()
+        self.assertEqual(static_status["security"], "wpa-psk")
+        self.assertEqual(static_status["password_source"], "configured")
+        self.assertEqual(static_status["credential_file"], "")
+        self.assertEqual(self.module.setup_ap_password(), "staticpass123")
+        self.assertFalse(self.module.SETUP_AP_CREDENTIAL_FILE.exists())
+
+        self.module.AP_PASSWORD = "auto"
+        generated = self.module.setup_ap_password()
+        self.assertGreaterEqual(len(generated), 8)
+        self.assertEqual(self.module.setup_ap_password(), generated)
+        self.assertEqual(oct(self.module.SETUP_AP_CREDENTIAL_FILE.stat().st_mode & 0o777), "0o600")
+        saved = json.loads(self.module.SETUP_AP_CREDENTIAL_FILE.read_text())
+        self.assertEqual(saved["password"], generated)
+        generated_status = self.module.setup_ap_status()
+        self.assertEqual(generated_status["security"], "wpa-psk")
+        self.assertEqual(generated_status["password_source"], "generated")
+        self.assertEqual(generated_status["credential_file"], str(self.module.SETUP_AP_CREDENTIAL_FILE))
+        self.assertNotIn("password", generated_status)
+
+    def test_setup_ap_password_rejects_short_values(self):
+        self.module.AP_PASSWORD = "short"
+        with self.assertRaises(ValueError):
+            self.module.setup_ap_password()
 
     def test_portal_version_includes_asset_summary(self):
         self.module.PORTAL_VERSION_FILE.write_text(json.dumps({

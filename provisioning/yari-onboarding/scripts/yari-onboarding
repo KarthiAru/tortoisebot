@@ -27,6 +27,7 @@ STATE_DIR = Path(os.environ.get("YARI_ONBOARDING_STATE_DIR", "/var/lib/yari/onbo
 STATE_FILE = STATE_DIR / "state.json"
 COMPLETE_FILE = STATE_DIR / "complete"
 DEVICE_ID_FILE = STATE_DIR / "device-id"
+SETUP_AP_CREDENTIAL_FILE = STATE_DIR / "setup-ap-credentials.json"
 SUPPORT_BUNDLE_DIR = STATE_DIR / "support-bundles"
 SERVICE_STATE_DIR = Path(os.environ.get("YARI_SERVICE_STATE_DIR", "/var/lib/yari/services"))
 WEB_DIR = Path(os.environ.get("YARI_ONBOARDING_WEB_DIR", "/opt/yari/onboarding/web"))
@@ -248,6 +249,52 @@ def regenerate_device_id():
 
 def ap_ssid():
     return os.environ.get("YARI_ONBOARDING_AP_SSID", f"{AP_SSID_PREFIX}-{device_id()}")
+
+
+def generated_setup_ap_password():
+    existing = read_json_file(SETUP_AP_CREDENTIAL_FILE, {})
+    password = str(existing.get("password") or "") if isinstance(existing, dict) else ""
+    if len(password) >= 8:
+        return password
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    password = "yari-" + "".join(secrets.choice(alphabet) for _ in range(14))
+    SETUP_AP_CREDENTIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETUP_AP_CREDENTIAL_FILE.write_text(json.dumps({
+        "ssid": ap_ssid(),
+        "password": password,
+        "generated": True,
+        "created": int(time.time()),
+        "note": "Use this for the setup AP. Keep it off support bundles and web API responses.",
+    }, indent=2) + "\n")
+    os.chmod(SETUP_AP_CREDENTIAL_FILE, 0o600)
+    return password
+
+
+def setup_ap_password():
+    value = normalize_form_value(AP_PASSWORD)
+    lowered = value.lower()
+    if lowered in {"", "open", "none", "off", "disabled"}:
+        return ""
+    if lowered in {"auto", "generate", "generated"}:
+        return generated_setup_ap_password()
+    if len(value) < 8:
+        raise ValueError("YARI_ONBOARDING_AP_PASSWORD must be at least 8 characters, 'auto', or empty/open")
+    return value
+
+
+def setup_ap_status():
+    value = normalize_form_value(AP_PASSWORD)
+    lowered = value.lower()
+    generated = lowered in {"auto", "generate", "generated"}
+    secured = bool(setup_ap_password())
+    return {
+        "ssid": ap_ssid(),
+        "address": AP_ADDR,
+        "security": "wpa-psk" if secured else "open",
+        "password_configured": secured,
+        "password_source": "generated" if generated and secured else ("configured" if secured else "open"),
+        "credential_file": str(SETUP_AP_CREDENTIAL_FILE) if generated and secured else "",
+    }
 
 
 def current_state(extra=None):
@@ -663,10 +710,12 @@ def ensure_ap_networkmanager():
         run(["nmcli", "connection", "delete", "yari-setup-ap"], capture=True)
     run(["nmcli", "connection", "add", "type", "wifi", "ifname", AP_IFACE, "con-name", "yari-setup-ap", "autoconnect", "no", "ssid", ssid], check=True)
     run(["nmcli", "connection", "modify", "yari-setup-ap", "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "ipv4.method", "shared", "ipv4.addresses", f"{AP_ADDR}/{AP_PREFIX}", "ipv6.method", "ignore"], check=True)
-    if AP_PASSWORD:
-        run(["nmcli", "connection", "modify", "yari-setup-ap", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", AP_PASSWORD], check=True)
+    ap_password = setup_ap_password()
+    ap_status = setup_ap_status()
+    if ap_password:
+        run(["nmcli", "connection", "modify", "yari-setup-ap", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", ap_password], check=True)
     run(["nmcli", "connection", "up", "yari-setup-ap"], check=True)
-    write_state(current_state({"mode": "setup-ap", "ap_backend": "networkmanager", "ap_security": "wpa-psk" if AP_PASSWORD else "open"}))
+    write_state(current_state({"mode": "setup-ap", "ap_backend": "networkmanager", "ap_security": ap_status["security"], "ap_password_source": ap_status["password_source"]}))
 
 
 def ensure_ap_wpa_supplicant():
@@ -684,8 +733,9 @@ def ensure_ap_wpa_supplicant():
 
     ssid = ap_ssid().replace('"', '\\"')
     lines = ["ctrl_interface=/run/wpa_supplicant", "ap_scan=2", "network={", f"    ssid=\"{ssid}\"", "    mode=2", "    frequency=2412"]
-    if AP_PASSWORD:
-        password = AP_PASSWORD.replace('"', '\\"')
+    ap_password = setup_ap_password()
+    if ap_password:
+        password = ap_password.replace('"', '\\"')
         lines.extend(["    key_mgmt=WPA-PSK", f"    psk=\"{password}\""])
         security = "wpa-psk"
     else:
@@ -3052,7 +3102,7 @@ def dns_status():
 
 def network_config_placeholders():
     return {
-        "ap_mode": {"ssid": ap_ssid(), "address": AP_ADDR, "security": "wpa-psk" if AP_PASSWORD else "open"},
+        "ap_mode": setup_ap_status(),
         "client_wifi": {"profile": "yari-wifi", "configured_ssid": read_configured_ssid()},
         "ethernet": {"managed_by": "NetworkManager", "dhcp": True},
         "static_ip": {"supported": True, **read_static_ip_config()},
