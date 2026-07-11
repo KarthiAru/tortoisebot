@@ -106,7 +106,7 @@ Platform phases:
 
 ### YARI App Manifest v1
 
-YARI app manifests are versioned JSON files. The schema lives at `apps/manifest.schema.json`, examples live under `apps/examples/`, and fresh installs copy both to `/opt/yari/onboarding/apps`. Locally installed app manifests live in `/etc/yari/apps.d/*.json`; the portal merges those with built-in core app manifests.
+YARI app manifests are versioned JSON files. The schema lives at `apps/manifest.schema.json`, examples live under `apps/examples/`, and fresh installs copy both to `/opt/yari/onboarding/apps`. Locally installed app manifests live in `/etc/yari/apps.d/*.json`; the portal merges those with built-in core app manifests. The bundled local registry now seeds the first YARI OS robotics app set: Foxglove Bridge, YARI Atlas ROS 2 Bridge, MAVLink Router, ROS 2 MCAP Recorder, Camera Streamer, PX4/ArduPilot Log Downloader, and a Ground Robot SLAM Mapping profile.
 
 Manifest runtimes:
 

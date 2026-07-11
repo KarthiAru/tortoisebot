@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "id": "autopilot-log-downloader",
+  "name": "PX4/ArduPilot Log Downloader",
+  "version": "0.1.0",
+  "runtime": "service-bundle",
+  "description": "Discover, queue, download, and upload flight-controller logs from PX4 or ArduPilot vehicles.",
+  "services": [
+    "yari-log-manager"
+  ],
+  "ports": [],
+  "permissions": [
+    "mavlink.read",
+    "logs.read",
+    "logs.write",
+    "logs.upload",
+    "storage.persistent",
+    "network.client"
+  ],
+  "healthcheck": {
+    "type": "service",
+    "service": "yari-log-manager"
+  },
+  "ui": {
+    "path": "#data"
+  }
+}

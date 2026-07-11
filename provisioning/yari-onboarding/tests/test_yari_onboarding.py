@@ -177,12 +177,46 @@ class YariOnboardingTests(unittest.TestCase):
         ground = self.module.recommended_apps_for_profile({"vehicle_class": "ground_rover", "autopilot_stack": "ros_only"})
         ground_ids = {item["id"] for item in ground}
         self.assertIn("ros2-manager", ground_ids)
+        self.assertIn("rosbag-recorder", ground_ids)
+        self.assertIn("ground-slam-mapping", ground_ids)
         self.assertIn("foxglove-bridge", ground_ids)
+        self.assertIn("yari-atlas-bridge", ground_ids)
+        self.assertEqual(len(ground_ids), len(ground))
         drone = self.module.recommended_apps_for_profile({"vehicle_class": "multirotor", "autopilot_stack": "px4"})
         drone_ids = {item["id"] for item in drone}
         self.assertIn("mavlink-router", drone_ids)
+        self.assertIn("autopilot-log-downloader", drone_ids)
+        self.assertIn("yari-atlas-bridge", drone_ids)
         self.assertIn("video-manager", drone_ids)
         self.assertEqual(len(drone_ids), len(drone))
+
+    def test_app_readiness_reports_container_runtime_and_service_availability(self):
+        container_app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/yari/camera-streamer:0.1.0"},
+            "permissions": ["camera.read"],
+        })
+        self.assertEqual(self.module.app_readiness(container_app)["state"], "blocked")
+        ready = self.module.app_readiness(container_app, [], {"runtime": {"available": True, "name": "podman"}, "active": "not-created"})
+        self.assertEqual(ready["state"], "ready")
+        self.assertIn("podman", ready["message"])
+
+        service_app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "missing-service",
+            "name": "Missing Service",
+            "version": "0.1.0",
+            "runtime": "service-bundle",
+            "services": ["missing.service"],
+            "permissions": ["ros.read"],
+        })
+        blocked = self.module.app_readiness(service_app, [{"unit": "missing.service", "available": False}])
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertIn("missing.service", blocked["message"])
 
     def test_app_catalog_loads_external_manifest_and_reports_errors(self):
         self.module.APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -317,10 +351,21 @@ class YariOnboardingTests(unittest.TestCase):
         examples_dir = SCRIPT.parents[1] / "apps" / "examples"
         examples = list(examples_dir.glob("*.json"))
         self.assertTrue(examples)
+        app_ids = set()
         for path in examples:
             app = self.module.normalize_app_manifest(json.loads(path.read_text()), str(path))
             self.assertEqual(app["schema_version"], "1")
             self.assertIn(app["runtime"], {"core-service", "service-bundle", "container"})
+            app_ids.add(app["id"])
+        self.assertTrue({
+            "foxglove-bridge",
+            "yari-atlas-bridge",
+            "mavlink-router",
+            "rosbag-recorder",
+            "camera-streamer",
+            "autopilot-log-downloader",
+            "ground-slam-mapping",
+        }.issubset(app_ids))
 
     def test_validate_app_manifest_reports_install_readiness(self):
         manifest = {
@@ -369,6 +414,9 @@ class YariOnboardingTests(unittest.TestCase):
         camera = next(app for app in registry["apps"] if app["id"] == "camera-streamer")
         self.assertFalse(camera["installed"])
         self.assertFalse(camera["update"]["update_available"])
+        self.assertTrue(camera["actions"]["apply"])
+        self.assertTrue(camera["actions"]["install"])
+        self.assertFalse(camera["actions"]["update"])
         self.assertEqual(camera["update"]["registry_version"], "0.1.0")
         self.assertEqual(registry["registry_dir"], str(self.module.APP_REGISTRY_DIR))
         self.module.install_registry_app("camera-streamer")
@@ -377,6 +425,8 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertTrue(camera["installed"])
         self.assertEqual(camera["installed_version"], "0.1.0")
         self.assertFalse(camera["update"]["update_available"])
+        self.assertFalse(camera["actions"]["apply"])
+        self.assertIn("current", camera["actions"]["reason"])
         self.assertTrue((self.module.APP_MANIFEST_DIR / "camera-streamer.json").exists())
         registry_manifest.write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"0.2.0","runtime":"container","container":{"image":"registry.yari.io/camera:2"},"permissions":["camera.read"]}')
         registry = self.module.app_registry()
@@ -384,9 +434,24 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(camera["installed_version"], "0.1.0")
         self.assertEqual(camera["update"]["registry_version"], "0.2.0")
         self.assertTrue(camera["update"]["update_available"])
+        self.assertTrue(camera["actions"]["apply"])
+        self.assertTrue(camera["actions"]["update"])
         catalog = self.module.app_catalog()
         installed = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
         self.assertTrue(installed["update"]["update_available"])
+
+    def test_app_registry_marks_builtin_apps_as_base_image_managed(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        registry_manifest = self.module.APP_REGISTRY_DIR / "foxglove.json"
+        registry_manifest.write_text('{"schema_version":"1","id":"foxglove-bridge","name":"Foxglove Bridge","version":"core","runtime":"core-service","services":["foxglove-bridge"],"permissions":["ros.read"]}')
+        registry = self.module.app_registry()
+        foxglove = next(app for app in registry["apps"] if app["id"] == "foxglove-bridge")
+        self.assertTrue(foxglove["installed"])
+        self.assertEqual(foxglove["installed_source"], "builtin")
+        self.assertFalse(foxglove["actions"]["apply"])
+        self.assertIn("base image", foxglove["actions"]["reason"])
+        with self.assertRaises(ValueError):
+            self.module.update_installed_app("foxglove-bridge")
 
     def write_app_package(self, name, manifest, metadata=None):
         import hashlib

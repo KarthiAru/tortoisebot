@@ -1536,18 +1536,38 @@ def raw_app_manifests():
     return apps, errors
 
 
+def app_readiness(app, service_statuses=None, container_status_payload=None):
+    runtime = app.get("runtime")
+    if runtime == "container":
+        status = container_status_payload if container_status_payload is not None else container_status(app)
+        runtime_info = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
+        if not runtime_info.get("available", False):
+            return {"state": "blocked", "message": runtime_info.get("error") or "Docker or Podman is not installed"}
+        if status.get("active") == "runtime-missing":
+            return {"state": "blocked", "message": "Container runtime is missing"}
+        return {"state": "ready", "message": f"Container runtime available: {runtime_info.get('name') or runtime_info.get('runtime') or 'container'}"}
+    statuses = service_statuses if service_statuses is not None else app_service_statuses(app)
+    if not statuses:
+        return {"state": "blocked", "message": "No service is declared for this app"}
+    unavailable = [status.get("unit") or status.get("name") for status in statuses if status.get("available") is False]
+    if unavailable:
+        return {"state": "blocked", "message": "Missing service unit: " + ", ".join(str(item) for item in unavailable)}
+    return {"state": "ready", "message": "Declared services are available"}
+
+
 def enrich_app(app, registry_app=None):
     app = dict(app)
     external = app.get("source") != "builtin"
     app["update"] = app_update_metadata(app, registry_app)
     app["service_status"] = app_service_statuses(app)
     app["container_status"] = container_status(app)
+    app["readiness"] = app_readiness(app, app["service_status"], app["container_status"])
     if app.get("runtime") == "container":
         base_health = container_health(app["container_status"])
-        can_run = app["container_status"].get("runtime", {}).get("available", False)
+        can_run = app["readiness"].get("state") == "ready"
     else:
         base_health = app_health_from_services(app["service_status"])
-        can_run = bool(app["service_status"])
+        can_run = app["readiness"].get("state") == "ready"
     app["healthcheck_status"] = app_healthcheck_status(app)
     app["health"] = combine_app_health(base_health, app["healthcheck_status"])
     app["installed"] = True
@@ -1569,17 +1589,21 @@ def recommended_apps_for_profile(profile=None):
     autopilot_stack = profile.get("autopilot_stack", "none")
     base = [
         {"id": "yari-atlas-agent", "reason": "Atlas telemetry, pairing, uploads, and remote operations."},
+        {"id": "yari-atlas-bridge", "reason": "Atlas live-control bridge for ROS 2 camera, telemetry, and commands."},
         {"id": "log-manager", "reason": "MCAP, service, and vehicle log collection."},
     ]
     if vehicle_class in {"ground_rover", "generic_edge"} or autopilot_stack in {"none", "ros_only"}:
         base.extend([
             {"id": "ros2-manager", "reason": "ROS 2 launch, topic discovery, and MCAP recording."},
+            {"id": "rosbag-recorder", "reason": "Reusable MCAP recording profile for Foxglove/Atlas datasets."},
+            {"id": "ground-slam-mapping", "reason": "Ground-robot SLAM and mapping profile for LiDAR, TF, odometry, and Nav2."},
             {"id": "video-manager", "reason": "Camera preview, Foxglove image readiness, and streaming settings."},
             {"id": "foxglove-bridge", "reason": "Live visualization and teleop through Foxglove."},
         ])
     if autopilot_stack in {"px4", "ardupilot"} or vehicle_class in {"multirotor", "fixed_wing", "vtol", "boat", "sub"}:
         base.extend([
             {"id": "mavlink-router", "reason": "PX4/ArduPilot MAVLink routing and autopilot status."},
+            {"id": "autopilot-log-downloader", "reason": "PX4/ArduPilot log download, queueing, and upload readiness."},
             {"id": "video-manager", "reason": "Low-latency camera streams for remote piloting and inspection."},
             {"id": "foxglove-bridge", "reason": "Live MAVLink/ROS visualization during integration and debugging."},
         ])
@@ -1643,7 +1667,23 @@ def app_registry():
                     "registry_digest": app_manifest_digest(app),
                     "update_available": False,
                 }
+                if installed and installed.get("source") == "builtin":
+                    can_apply = False
+                    apply_reason = f"Built-in app '{app['id']}' is managed by the base image"
+                elif installed:
+                    can_apply = bool(app["update"].get("update_available"))
+                    apply_reason = "update available" if can_apply else "installed manifest is current"
+                else:
+                    can_apply = True
+                    apply_reason = "ready to install"
+                app["readiness"] = app_readiness(app)
                 app["registry_source"] = "local"
+                app["actions"] = {
+                    "apply": can_apply,
+                    "install": not installed and can_apply,
+                    "update": bool(installed and can_apply),
+                    "reason": apply_reason,
+                }
                 apps.append(app)
             except Exception as exc:
                 errors.append({"source": str(path), "error": str(exc)})
@@ -1936,6 +1976,8 @@ def install_registry_app(app_id, replace=False):
 
 def update_installed_app(app_id):
     installed = app_by_id(app_id)
+    if installed.get("source") == "builtin":
+        raise ValueError(f"Built-in app '{app_id}' is managed by the base image")
     registry_app = registry_apps_by_id().get(app_id)
     if not registry_app:
         raise ValueError(f"No registry update source found for app '{app_id}'")

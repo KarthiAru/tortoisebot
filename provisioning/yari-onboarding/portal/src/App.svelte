@@ -218,6 +218,42 @@
     return items.map((item: AnyRecord) => String(item.permission) + ': ' + String(item.reason || item.risk)).join(', ');
   }
 
+  function registryActionLabel(app: AnyRecord) {
+    const actions = app.actions || {};
+    if (actions.update) return 'Apply update';
+    if (actions.install) return 'Install manifest';
+    if (app.installed_source === 'builtin') return 'Managed by base image';
+    if (app.installed) return 'Up to date';
+    return 'Install manifest';
+  }
+
+  function installedAppById(appId: string) {
+    return (apps?.apps || []).find((app: AnyRecord) => app.id === appId);
+  }
+
+  function registryAppById(appId: string) {
+    return (appRegistry?.apps || []).find((app: AnyRecord) => app.id === appId);
+  }
+
+  function recommendationApp(item: AnyRecord) {
+    return installedAppById(String(item.id || '')) || registryAppById(String(item.id || '')) || item;
+  }
+
+  function recommendationStatus(item: AnyRecord) {
+    const app = recommendationApp(item);
+    if (app.update?.update_available) return 'Update available';
+    if (app.installed) return 'Installed';
+    if (registryAppById(String(item.id || ''))) return 'Available';
+    return 'Recommended';
+  }
+
+  function recommendationStatusClass(item: AnyRecord) {
+    const app = recommendationApp(item);
+    if (app.update?.update_available) return 'warn';
+    if (app.installed) return 'ok';
+    return '';
+  }
+
   function packageTrust(pkg: AnyRecord) {
     const signature = pkg.signature || {};
     const status = String(signature.status || 'missing');
@@ -1884,16 +1920,27 @@
         <h2>Recommended For This Device</h2>
         <div class="app-grid">
           {#each apps?.recommendations || [] as item}
+            {@const app = recommendationApp(item)}
+            {@const registryApp = registryAppById(item.id)}
             <article class="app-card">
               <div class="app-card-title">
                 <div>
-                  <strong>{item.name || item.id}</strong>
-                  <small>{item.id}</small>
+                  <strong>{app.name || item.name || item.id}</strong>
+                  <small>{item.id} / {app.runtime ? runtimeLabel(app) : 'profile recommendation'}</small>
                 </div>
-                <span class:ok={item.installed} class="status-pill">{item.installed ? 'Installed' : 'Recommended'}</span>
+                <span class={`status-pill ${recommendationStatusClass(item)}`}>{recommendationStatus(item)}</span>
               </div>
-              <p>{recommendationSummary(item)}</p>
-              {#if item.ui?.path}<button class="secondary" on:click={() => openUiPath(item.ui.path)}>Open UI</button>{/if}
+              <p>{recommendationSummary({ ...app, ...item })}</p>
+              <dl class="meta-list">
+                <div><dt>Reason</dt><dd>{item.reason || 'Recommended for this device profile.'}</dd></div>
+                <div><dt>Readiness</dt><dd>{app.readiness?.message || registryApp?.readiness?.message || 'Ready to evaluate'}</dd></div>
+                <div><dt>Source</dt><dd>{app.source === 'builtin' ? 'Base image' : registryApp ? 'Local registry' : app.source || 'Profile'}</dd></div>
+              </dl>
+              <div class="row compact">
+                {#if app.ui?.path}<button class="secondary" on:click={() => openUiPath(app.ui.path)}>Open UI</button>{/if}
+                {#if registryApp && !app.installed}<button class="secondary" disabled={!registryApp.actions?.apply} title={registryApp.actions?.reason || ''} on:click={() => installRegistryApp(registryApp.id)}>{registryActionLabel(registryApp)}</button>{/if}
+                {#if registryApp && app.installed && registryApp.actions?.update}<button class="secondary" on:click={() => installRegistryApp(registryApp.id)}>Apply update</button>{/if}
+              </div>
             </article>
           {/each}
         </div>
@@ -1917,6 +1964,7 @@
               <p>{app.description || 'No description provided.'}</p>
               <dl class="meta-list">
                 <div><dt>Runtime</dt><dd>{runtimeLabel(app)}</dd></div>
+                <div><dt>Readiness</dt><dd>{app.readiness?.message || 'unknown'}</dd></div>
                 <div><dt>Healthcheck</dt><dd>{app.healthcheck_status?.state || 'not configured'}</dd></div>
                 <div><dt>Services</dt><dd>{listText(app.services)}</dd></div>
                 <div><dt>Ports</dt><dd>{listText((app.ports || []).map(formatPort))}</dd></div>
@@ -1959,6 +2007,7 @@
               <p>{app.description || 'Local manifest available on this device.'}</p>
               <dl class="meta-list">
                 <div><dt>Runtime</dt><dd>{runtimeLabel(app)}</dd></div>
+                <div><dt>Readiness</dt><dd>{app.readiness?.message || 'unknown'}</dd></div>
                 <div><dt>Services</dt><dd>{listText(app.services)}</dd></div>
                 <div><dt>Permission risk</dt><dd><span class={`status-pill ${permissionRiskClass(app)}`}>{permissionRiskLabel(app)}</span></dd></div>
                 <div><dt>Permissions</dt><dd>{listText(app.permissions)}</dd></div>
@@ -1966,7 +2015,7 @@
               </dl>
               <div class="row compact">
                 {#if app.ui?.path}<button class="secondary" on:click={() => openUiPath(app.ui.path)}>Open UI</button>{/if}
-                <button class="secondary" on:click={() => installRegistryApp(app.id)}>{app.update?.update_available ? 'Apply update' : app.installed ? 'Reinstall manifest' : 'Install manifest'}</button>
+                <button class="secondary" disabled={!app.actions?.apply} title={app.actions?.reason || ''} on:click={() => installRegistryApp(app.id)}>{registryActionLabel(app)}</button>
               </div>
             </article>
           {/each}

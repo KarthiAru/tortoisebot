@@ -1,0 +1,29 @@
+{
+  "schema_version": "1",
+  "id": "mavlink-router",
+  "name": "MAVLink Router",
+  "version": "core",
+  "runtime": "core-service",
+  "description": "Route PX4/ArduPilot MAVLink telemetry and command links between serial, UDP, TCP, ROS 2, and Atlas.",
+  "services": [
+    "yari-mavlink-router",
+    "yari-autopilot-manager"
+  ],
+  "ports": [
+    14550
+  ],
+  "permissions": [
+    "mavlink.read",
+    "mavlink.write",
+    "serial.read-write",
+    "network.listen",
+    "network.client"
+  ],
+  "healthcheck": {
+    "type": "service",
+    "service": "yari-mavlink-router"
+  },
+  "ui": {
+    "path": "#autopilot"
+  }
+}

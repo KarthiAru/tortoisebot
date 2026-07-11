@@ -1,0 +1,28 @@
+{
+  "schema_version": "1",
+  "id": "yari-atlas-bridge",
+  "name": "YARI Atlas ROS 2 Bridge",
+  "version": "0.1.0",
+  "runtime": "service-bundle",
+  "description": "Publish ROS 2 camera, telemetry, and command topics through the YARI Atlas live-control bridge.",
+  "services": [
+    "yari-agent"
+  ],
+  "ports": [],
+  "permissions": [
+    "atlas.pair",
+    "ros.read",
+    "ros.write",
+    "network.client",
+    "camera.read",
+    "mavlink.read",
+    "mavlink.write"
+  ],
+  "healthcheck": {
+    "type": "service",
+    "service": "yari-agent"
+  },
+  "ui": {
+    "path": "#status"
+  }
+}

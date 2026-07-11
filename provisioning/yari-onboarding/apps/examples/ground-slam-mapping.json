@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "id": "ground-slam-mapping",
+  "name": "Ground Robot SLAM Mapping",
+  "version": "0.1.0",
+  "runtime": "service-bundle",
+  "description": "Ground-robot mapping profile for LiDAR, odometry, TF, Nav2, Cartographer/SLAM Toolbox, and MCAP capture.",
+  "services": [
+    "yari-ros"
+  ],
+  "ports": [],
+  "permissions": [
+    "ros.read",
+    "ros.write",
+    "mavlink.read",
+    "logs.write",
+    "storage.persistent"
+  ],
+  "healthcheck": {
+    "type": "service",
+    "service": "yari-ros"
+  },
+  "ui": {
+    "path": "#ros"
+  }
+}
