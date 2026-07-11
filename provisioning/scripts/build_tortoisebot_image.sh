@@ -97,7 +97,7 @@ source "${CONFIG_FILE}"
 : "${YARI_ONBOARDING_ENABLED:=1}"
 : "${YARI_ONBOARDING_AP_PASSWORD:=}"
 : "${YARI_ONBOARDING_CONNECTIVITY_TIMEOUT:=45}"
-: "${YARI_PORTAL_BUILD:=auto}"
+: "${YARI_PORTAL_BUILD:=always}"
 
 info() {
   echo "==> $*"
@@ -135,25 +135,19 @@ build_yari_portal() {
   local portal_dir="${REPO_ROOT}/provisioning/yari-onboarding/portal"
   local mode="${YARI_PORTAL_BUILD}"
   [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "true" || "${YARI_ONBOARDING_ENABLED}" == "True" ]] || return
-  [[ "${mode}" != "never" ]] || return
-  [[ -f "${portal_dir}/package.json" ]] || return
+  if [[ "${mode}" == "never" ]]; then
+    die "YARI_PORTAL_BUILD=never is not supported when YARI_ONBOARDING_ENABLED=1; the Svelte portal is required."
+  fi
+  [[ -f "${portal_dir}/package.json" ]] || die "Missing Svelte portal package.json at ${portal_dir}."
 
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    if [[ "${mode}" == "always" ]]; then
-      die "YARI_PORTAL_BUILD=always requires Node.js >= 18 and npm on the host."
-    fi
-    info "Node.js/npm not found; using legacy static YARI portal fallback"
-    return
+    die "YARI portal build requires Node.js >= 18 and npm on the host."
   fi
 
   local node_major
   node_major="$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)"
   if (( node_major < 18 )); then
-    if [[ "${mode}" == "always" ]]; then
-      die "YARI_PORTAL_BUILD=always requires Node.js >= 18; found $(node --version 2>/dev/null || echo unknown)."
-    fi
-    info "Node.js >= 18 not found; using legacy static YARI portal fallback"
-    return
+    die "YARI portal build requires Node.js >= 18; found $(node --version 2>/dev/null || echo unknown)."
   fi
 
   info "Building Svelte YARI OS portal"
@@ -541,11 +535,10 @@ if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "tr
   install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/"*.service "${ROOT_MOUNT}/etc/systemd/system/"
   cp -a "${REPO_ROOT}/provisioning/yari-onboarding/apps/." "${ROOT_MOUNT}/opt/yari/onboarding/apps/"
   find "${ROOT_MOUNT}/opt/yari/onboarding/apps" -name '*:Zone.Identifier' -delete || true
-  if [[ -f "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/index.html" ]]; then
-    cp -a "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
-  else
-    cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  if [[ ! -f "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/index.html" ]]; then
+    die "Svelte portal build missing; ensure YARI_PORTAL_BUILD is enabled and Node.js >= 18 plus npm are available."
   fi
+  cp -a "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
   find "${ROOT_MOUNT}/opt/yari/onboarding/web" -name '*:Zone.Identifier' -delete || true
   cat > "${ROOT_MOUNT}/etc/yari/onboarding.env" <<ONBOARDING_ENV
 YARI_ONBOARDING_WIFI_IFACE=wlan0

@@ -21,6 +21,11 @@ curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
   > /etc/apt/sources.list.d/ros2.list
 
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  -o /etc/apt/keyrings/nodesource.gpg
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+  > /etc/apt/sources.list.d/nodesource.list
+
 apt-get update
 apt-get install -y \
   ca-certificates \
