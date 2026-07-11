@@ -194,6 +194,30 @@
     return '';
   }
 
+  function permissionReview(app: AnyRecord | undefined) {
+    return app?.permission_review || { risk: 'low', items: [] };
+  }
+
+  function permissionRiskClass(app: AnyRecord | undefined) {
+    const risk = String(permissionReview(app).risk || 'low').toLowerCase();
+    if (risk === 'high') return 'bad';
+    if (risk === 'medium') return 'warn';
+    return 'ok';
+  }
+
+  function permissionRiskLabel(app: AnyRecord | undefined) {
+    const risk = String(permissionReview(app).risk || 'low').toLowerCase();
+    if (risk === 'high') return 'High risk';
+    if (risk === 'medium') return 'Medium risk';
+    return 'Low risk';
+  }
+
+  function permissionReviewText(app: AnyRecord | undefined) {
+    const items = permissionReview(app).items;
+    if (!Array.isArray(items) || items.length === 0) return 'No elevated permissions declared.';
+    return items.map((item: AnyRecord) => String(item.permission) + ': ' + String(item.reason || item.risk)).join(', ');
+  }
+
   function packageTrust(pkg: AnyRecord) {
     const signature = pkg.signature || {};
     const status = String(signature.status || 'missing');
@@ -1896,7 +1920,9 @@
                 <div><dt>Healthcheck</dt><dd>{app.healthcheck_status?.state || 'not configured'}</dd></div>
                 <div><dt>Services</dt><dd>{listText(app.services)}</dd></div>
                 <div><dt>Ports</dt><dd>{listText((app.ports || []).map(formatPort))}</dd></div>
+                <div><dt>Permission risk</dt><dd><span class={`status-pill ${permissionRiskClass(app)}`}>{permissionRiskLabel(app)}</span></dd></div>
                 <div><dt>Permissions</dt><dd>{listText(app.permissions)}</dd></div>
+                <div><dt>Review</dt><dd>{permissionReviewText(app)}</dd></div>
                 {#if app.container_status?.active}
                   <div><dt>Container</dt><dd>{app.container_status.active}</dd></div>
                 {/if}
@@ -1934,7 +1960,9 @@
               <dl class="meta-list">
                 <div><dt>Runtime</dt><dd>{runtimeLabel(app)}</dd></div>
                 <div><dt>Services</dt><dd>{listText(app.services)}</dd></div>
+                <div><dt>Permission risk</dt><dd><span class={`status-pill ${permissionRiskClass(app)}`}>{permissionRiskLabel(app)}</span></dd></div>
                 <div><dt>Permissions</dt><dd>{listText(app.permissions)}</dd></div>
+                <div><dt>Review</dt><dd>{permissionReviewText(app)}</dd></div>
               </dl>
               <div class="row compact">
                 {#if app.ui?.path}<button class="secondary" on:click={() => openUiPath(app.ui.path)}>Open UI</button>{/if}
@@ -1988,7 +2016,9 @@
                 <div><dt>Signature</dt><dd>{pkg.signature?.status || 'unknown'}</dd></div>
                 <div><dt>Signer</dt><dd>{pkg.signature?.signed_by || 'unknown'}</dd></div>
                 <div><dt>Algorithm</dt><dd>{pkg.signature?.signature_type || 'unknown'}</dd></div>
+                <div><dt>Permission risk</dt><dd><span class={`status-pill ${permissionRiskClass(pkg.app)}`}>{permissionRiskLabel(pkg.app)}</span></dd></div>
                 <div><dt>Permissions</dt><dd>{listText(pkg.app?.permissions)}</dd></div>
+                <div><dt>Review</dt><dd>{permissionReviewText(pkg.app)}</dd></div>
               </dl>
               <div class="row compact">
                 {#if pkg.app?.ui?.path}<button class="secondary" on:click={() => openUiPath(pkg.app.ui.path)}>Open UI</button>{/if}

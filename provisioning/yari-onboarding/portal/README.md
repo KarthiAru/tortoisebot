@@ -2,7 +2,7 @@
 
 Svelte source for the YARI OS device-local portal.
 
-The robot does not need Node.js at runtime. This source tree builds static files into `dist/`, and `install-yari-onboarding` installs either `portal/dist` when present or the legacy `web/` bundle as a fallback.
+The robot does not need Node.js at runtime after installation. This source tree builds static files into `dist/`, and `install-yari-onboarding` installs the Svelte build only. If `dist/index.html` is missing, the installer will run `npm ci` when dependencies are absent or stale, run `npm run build`, and then copy `dist/` into `/opt/yari/onboarding/web`. Legacy static portal fallback is intentionally unsupported.
 
 ## Stack
 
@@ -37,7 +37,7 @@ sudo provisioning/yari-onboarding/scripts/install-yari-onboarding
 
 ## App Runtime UI
 
-The Apps tab is the first operator-facing slice of the YARI OS app model. It shows profile-based recommendations, installed core/service/container apps, local registry manifests, local `.yariapp` packages, health state, declared services, ports, permissions, and direct start/stop/restart/log actions. Logs use `journalctl` for service apps and Docker/Podman logs for container apps. Installed app cards can apply a matching local registry update directly when the manifest digest changes. Local package cards expose trust state (`Unsigned`, `Signed metadata`, `Verified`, or `Blocked`) from the backend signature policy so production images can reject unverified packages without hiding why. Manual JSON manifest validation/install remains available for development and support, but normal operators should use the local registry and package cards first.
+The Apps tab is the first operator-facing slice of the YARI OS app model. It shows profile-based recommendations, installed core/service/container apps, local registry manifests, local `.yariapp` packages, health state, declared services, ports, permissions, backend-derived permission risk review, and direct start/stop/restart/log actions. Logs use `journalctl` for service apps and Docker/Podman logs for container apps. Installed app cards can apply a matching local registry update directly when the manifest digest changes. Local package cards expose trust state (`Unsigned`, `Signed metadata`, `Verified`, or `Blocked`) from the backend signature policy so production images can reject unverified packages without hiding why. Manual JSON manifest validation/install remains available for development and support, but normal operators should use the local registry and package cards first.
 
 Use `yari-package-app` to create local packages from manifest JSON. It is installed to `/usr/local/bin` by `install-yari-onboarding` and can add checksum metadata plus an optional OpenSSL signature over `manifest.json`. Operators can upload a package from the Apps tab without SSH; the backend validates the archive before storing it in `/var/lib/yari/app-packages`. Package cards can install/apply the embedded manifest or remove the local package file; removal does not uninstall an already-applied app manifest.
 

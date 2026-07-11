@@ -59,7 +59,7 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 ## Web UI Stack Direction
 
-The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime: the built static files are installed into `/opt/yari/onboarding/web` and served by the local `yari-onboarding` Python service. If `portal/dist/index.html` is not present, the installer falls back to the legacy dependency-free `web/` bundle so recovery installs remain robust.
+The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed; if npm is unavailable and `portal/dist/index.html` is missing, installation fails with an explicit build requirement.
 
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
@@ -137,7 +137,7 @@ Supported health checks:
 
 Manifest-defined shell/command health checks are intentionally unsupported; app manifests should not become arbitrary command execution surfaces.
 
-The Python backend enforces the same safety constraints used by the schema for container manifests: network mode must be `bridge`, `host`, or `none`; port protocols must be `tcp` or `udp`; and environment variable names must use shell-safe identifier syntax. Device mappings, host networking, privileged mode, Linux capabilities, and host volumes are also permission-gated so an app manifest is a declarative permission request rather than a raw container escape hatch.
+The Python backend enforces the same safety constraints used by the schema for container manifests: network mode must be `bridge`, `host`, or `none`; port protocols must be `tcp` or `udp`; and environment variable names must use shell-safe identifier syntax. Device mappings, host networking, privileged mode, Linux capabilities, and host volumes are also permission-gated so an app manifest is a declarative permission request rather than a raw container escape hatch. The backend also derives a `permission_review` block with low/medium/high risk and human-readable reasons; the portal displays this on installed apps, local registry entries, packages, and manifest validation output before an operator applies a change.
 
 Current container permission gates:
 

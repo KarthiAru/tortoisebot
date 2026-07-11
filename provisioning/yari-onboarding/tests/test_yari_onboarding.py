@@ -1065,9 +1065,9 @@ class YariOnboardingTests(unittest.TestCase):
         saved = json.loads(self.module.OTA_STATE_FILE.read_text())
         self.assertEqual(saved["artifact"], str(artifact.resolve()))
 
-    def test_portal_version_defaults_to_legacy_without_built_metadata(self):
+    def test_portal_version_reports_missing_svelte_build_metadata(self):
         version = self.module.portal_version()
-        self.assertEqual(version["frontend_stack"], "legacy-static-html")
+        self.assertEqual(version["frontend_stack"], "svelte-build-missing")
 
     def test_portal_version_reads_built_metadata(self):
         self.module.PORTAL_VERSION_FILE.write_text('{"name":"yari-os-device-portal","version":"0.1.0","build_time":"now","git_commit":"abc123","frontend_stack":"svelte-typescript-vite"}')

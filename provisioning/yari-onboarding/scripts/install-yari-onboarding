@@ -14,14 +14,38 @@ install -m 0755 "${SRC_ROOT}/scripts/yari-service-manager" /usr/local/sbin/yari-
 install -m 0755 "${SRC_ROOT}/scripts/yari-package-app" /usr/local/bin/yari-package-app
 
 install -d -m 0755 /opt/yari/onboarding/web
-if [[ -f "${SRC_ROOT}/portal/dist/index.html" ]]; then
-  rm -rf /opt/yari/onboarding/web/*
-  cp -a "${SRC_ROOT}/portal/dist/." /opt/yari/onboarding/web/
-  echo "Installed built Svelte YARI OS portal from ${SRC_ROOT}/portal/dist"
-else
-  cp -a "${SRC_ROOT}/web/." /opt/yari/onboarding/web/
-  echo "Installed legacy static YARI OS portal. Build portal/dist to install the Svelte portal."
+PORTAL_SRC="${SRC_ROOT}/portal"
+PORTAL_DIST="${PORTAL_SRC}/dist"
+
+run_portal_build() {
+  local portal_owner build_command
+  portal_owner="$(stat -c '%U' "${PORTAL_SRC}" 2>/dev/null || echo root)"
+  build_command="cd '${PORTAL_SRC}' && if [[ ! -d node_modules || package-lock.json -nt node_modules/.package-lock.json ]]; then npm ci; fi && npm run build"
+  if [[ "${portal_owner}" != "root" && "${portal_owner}" != "UNKNOWN" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "${portal_owner}" -- bash -lc "${build_command}"
+  else
+    bash -lc "${build_command}"
+  fi
+}
+
+if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "Svelte portal build is missing and npm is not installed." >&2
+    echo "Install Node.js/npm on this device, or build provisioning/yari-onboarding/portal/dist before running this installer." >&2
+    exit 1
+  fi
+  echo "Building Svelte YARI OS portal from ${PORTAL_SRC}"
+  run_portal_build
 fi
+
+if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
+  echo "Svelte portal build failed: ${PORTAL_DIST}/index.html was not created." >&2
+  exit 1
+fi
+
+rm -rf /opt/yari/onboarding/web/*
+cp -a "${PORTAL_DIST}/." /opt/yari/onboarding/web/
+echo "Installed Svelte YARI OS portal from ${PORTAL_DIST}"
 find /opt/yari/onboarding/web -name '*:Zone.Identifier' -delete || true
 if command -v gzip >/dev/null 2>&1; then
   find /opt/yari/onboarding/web -type f \( -name '*.html' -o -name '*.js' -o -name '*.css' -o -name '*.json' -o -name '*.svg' -o -name '*.txt' \) -exec gzip -kf -9 {} \;

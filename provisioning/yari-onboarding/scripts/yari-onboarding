@@ -453,10 +453,10 @@ def portal_version():
     payload = read_json_file(PORTAL_VERSION_FILE, {})
     return {
         "name": payload.get("name", "yari-os-device-portal"),
-        "version": payload.get("version", "legacy"),
+        "version": payload.get("version", "unbuilt"),
         "build_time": payload.get("build_time", "unknown"),
         "git_commit": payload.get("git_commit", "unknown"),
-        "frontend_stack": payload.get("frontend_stack", "legacy-static-html"),
+        "frontend_stack": payload.get("frontend_stack", "svelte-build-missing"),
         "api_token_required": bool(portal_api_token()),
         "assets": portal_assets_summary(),
     }
