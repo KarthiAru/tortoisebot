@@ -1684,7 +1684,7 @@
 
       <div class="card wide">
         <h2>Config Import Dry Run</h2>
-        <p>Validate a redacted YARI config export before migration. Supported non-secret sections can be applied explicitly; secrets and app manifests are never restored automatically.</p>
+        <p>Validate a redacted YARI config export before migration. Supported non-secret sections can be applied explicitly; external app manifests are validated before restore, while built-ins and secrets are skipped.</p>
         <div class="row">
           <input accept="application/json,.json" type="file" on:change={selectConfigImportFile} />
           <button class="secondary" on:click={validateConfigImport}>Validate export</button>

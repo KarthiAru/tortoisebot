@@ -3190,6 +3190,52 @@ def config_import_candidate(payload):
     return candidate
 
 
+def importable_app_manifests(apps):
+    if not isinstance(apps, dict):
+        return {"valid": [], "skipped": [], "errors": []}
+    builtin_ids = {app["id"] for app in BUILTIN_APP_MANIFESTS}
+    valid = []
+    skipped = []
+    errors = []
+    for filename, manifest in sorted(apps.items()):
+        if not isinstance(manifest, dict):
+            errors.append({"name": filename, "error": "manifest is not a JSON object"})
+            continue
+        app_id = str(manifest.get("id") or Path(str(filename)).stem)
+        source = str(manifest.get("source") or "")
+        if source == "builtin" or app_id in builtin_ids:
+            skipped.append({"name": filename, "id": app_id, "reason": "built-in app is managed by the base image"})
+            continue
+        candidate = {key: value for key, value in manifest.items() if key != "source"}
+        if isinstance(candidate.get("container"), dict):
+            container = dict(candidate["container"])
+            if "environment" in container:
+                container.pop("environment", None)
+                skipped.append({"name": filename, "id": app_id, "reason": "container environment secrets must be re-entered"})
+            candidate["container"] = container
+        try:
+            validation = validate_app_manifest_payload({"manifest": candidate, "replace": True})
+        except (TypeError, ValueError) as exc:
+            errors.append({"name": filename, "id": app_id, "error": str(exc)})
+            continue
+        if not validation.get("can_install"):
+            errors.append({"name": filename, "id": app_id, "error": validation.get("reason", "manifest cannot be installed")})
+            continue
+        valid.append({"name": filename, "manifest": candidate, "app": validation["app"], "permission_review": validation["app"].get("permission_review", {})})
+    return {"valid": valid, "skipped": skipped, "errors": errors}
+
+
+def restore_app_manifests(apps):
+    plan = importable_app_manifests(apps)
+    if plan["errors"]:
+        raise ValueError("app manifest import validation failed: " + "; ".join(item.get("error", "invalid manifest") for item in plan["errors"]))
+    installed = []
+    for item in plan["valid"]:
+        result = install_app_manifest({"manifest": item["manifest"], "replace": True})
+        installed.append({"name": item["name"], "id": result["app"]["id"], "path": result["path"]})
+    return {"ok": True, "installed": installed, "skipped": plan["skipped"], "errors": []}
+
+
 def validate_config_import(payload):
     candidate = config_import_candidate(payload)
 
@@ -3225,8 +3271,13 @@ def validate_config_import(payload):
         add_section("mavlink_endpoints", "config/mavlink-endpoints.json", config["mavlink-endpoints.json"].keys(), "/api/mavlink/endpoints", True, "Serial device names may differ on the new hardware.")
     if "ota-config.json" in config:
         add_section("ota_policy", "config/ota-config.json", config["ota-config.json"].keys(), "/api/ota/config", True, "Atlas assignment URLs and credentials must be verified separately.")
+    app_import_plan = importable_app_manifests(apps)
     if apps:
-        add_section("app_manifests", "apps/*.json", apps.keys(), "/api/apps/install", False, "Future restore flow should validate and apply each app manifest explicitly.")
+        restore_supported = bool(app_import_plan["valid"]) and not app_import_plan["errors"]
+        app_note = "Valid external app manifests can be restored after review; built-in apps and app secrets are skipped."
+        if app_import_plan["errors"]:
+            app_note = "Some app manifests failed validation; fix them before restore."
+        add_section("app_manifests", "apps/*.json", apps.keys(), "/api/apps/install", restore_supported, app_note)
     warnings = [
         "Validation is dry-run only; no configuration was changed.",
         "Secrets are intentionally redacted and must be re-entered during restore.",
@@ -3252,10 +3303,11 @@ def validate_config_import(payload):
             "missing_secret_count": len(missing_secrets),
         },
         "apps": sorted(apps.keys()),
+        "app_manifest_import": app_import_plan,
         "missing_secrets": missing_secrets,
         "warnings": warnings,
-        "restore_supported": False,
-        "restore_note": candidate.get("restore_note") or "Automatic restore is not enabled yet.",
+        "restore_supported": bool(supported_sections),
+        "restore_note": candidate.get("restore_note") or "Apply only explicitly selected non-secret sections after review.",
     }
 
 
@@ -3278,6 +3330,7 @@ def apply_config_import(payload):
         raise ValueError("unsupported or unavailable import sections: " + ", ".join(unsupported))
 
     config = candidate.get("config") if isinstance(candidate.get("config"), dict) else {}
+    apps = candidate.get("apps") if isinstance(candidate.get("apps"), dict) else {}
     device = candidate.get("device") if isinstance(candidate.get("device"), dict) else {}
     profile = device.get("profile") if isinstance(device.get("profile"), dict) else {}
     applied = []
@@ -3294,6 +3347,8 @@ def apply_config_import(payload):
             results[section] = {"ok": True, "mavlink": write_mavlink_endpoints(config.get("mavlink-endpoints.json", {}))}
         elif section == "ota_policy":
             results[section] = save_ota_config(config.get("ota-config.json", {}))
+        elif section == "app_manifests":
+            results[section] = restore_app_manifests(apps)
         else:
             raise ValueError(f"section {section} is not supported for import apply")
         applied.append(section)

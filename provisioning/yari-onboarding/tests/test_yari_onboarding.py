@@ -183,7 +183,7 @@ class YariOnboardingTests(unittest.TestCase):
             "redaction": "secrets redacted",
             "device": {"profile": {"vehicle_class": "ground_rover", "compute_target": "raspberry_pi"}},
             "config": {"network-policy.json": {"fallback_ap_enabled": True}},
-            "apps": {"camera-streamer.json": {"id": "camera-streamer"}},
+            "apps": {"camera-streamer.json": {"schema_version": "1", "id": "camera-streamer", "name": "Camera Streamer", "version": "1.0.0", "runtime": "service-bundle", "services": ["yari-video"], "permissions": ["camera.read"]}},
             "restore_note": "redacted",
         }
 
@@ -191,16 +191,17 @@ class YariOnboardingTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertTrue(result["dry_run"])
-        self.assertFalse(result["restore_supported"])
+        self.assertTrue(result["restore_supported"])
         self.assertEqual(result["source_device_id"], "device-a")
         self.assertIn("camera-streamer.json", result["apps"])
         self.assertIn("App secrets and environment tokens", result["missing_secrets"])
         self.assertIn("device_profile", [section["name"] for section in result["sections"]])
         self.assertEqual(result["summary"]["section_count"], 3)
-        self.assertEqual(result["summary"]["restorable_now"], 2)
-        self.assertEqual(result["summary"]["future_only"], 1)
+        self.assertEqual(result["summary"]["restorable_now"], 3)
+        self.assertEqual(result["summary"]["future_only"], 0)
+        self.assertEqual(result["app_manifest_import"]["valid"][0]["app"]["id"], "camera-streamer")
         app_plan = next(section for section in result["restore_plan"] if section["name"] == "app_manifests")
-        self.assertFalse(app_plan["restore_supported"])
+        self.assertTrue(app_plan["restore_supported"])
         self.assertEqual(app_plan["apply_endpoint"], "/api/apps/install")
 
     def test_config_import_validation_rejects_wrong_kind(self):
@@ -220,13 +221,14 @@ class YariOnboardingTests(unittest.TestCase):
                 "mavlink-endpoints.json": {"endpoints": [{"name": "autopilot", "type": "serial", "device": "/dev/ttyACM0", "baud": 57600, "enabled": True}]},
                 "ota-config.json": {"release_channel": "beta", "auto_check": True, "auto_download": False, "auto_install": False, "require_signed_artifacts": True, "atlas_assignment_url": "https://atlas.example/api/v1/updates/assignment"},
             },
-            "apps": {"camera-streamer.json": {"id": "camera-streamer"}},
+            "apps": {"camera-streamer.json": {"schema_version": "1", "id": "camera-streamer", "name": "Camera Streamer", "version": "1.0.0", "runtime": "service-bundle", "services": ["yari-video"], "permissions": ["camera.read"]}},
         }
 
         with self.assertRaises(ValueError):
             self.module.apply_config_import({"export": export, "apply_sections": ["device_profile"]})
-        with self.assertRaises(ValueError):
-            self.module.apply_config_import({"export": export, "apply_sections": ["app_manifests"], "acknowledge_apply": True})
+        result_apps = self.module.apply_config_import({"export": export, "apply_sections": ["app_manifests"], "acknowledge_apply": True})
+        self.assertEqual(result_apps["results"]["app_manifests"]["installed"][0]["id"], "camera-streamer")
+        self.assertTrue((self.module.APP_MANIFEST_DIR / "camera-streamer.json").exists())
 
         result = self.module.apply_config_import({
             "export": export,
@@ -243,7 +245,44 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertFalse(self.module.read_static_ip_config()["enabled"])
         self.assertTrue(self.module.read_mavlink_endpoints()["endpoints"][0]["enabled"])
         self.assertEqual(self.module.read_ota_config()["release_channel"], "beta")
-        self.assertFalse(self.module.APP_MANIFEST_DIR.exists())
+        self.assertTrue((self.module.APP_MANIFEST_DIR / "camera-streamer.json").exists())
+
+    def test_config_import_app_manifest_restore_skips_builtins_and_rejects_invalid(self):
+        export = {
+            "schema_version": "1",
+            "kind": "yari-device-config-export",
+            "device_id": "device-a",
+            "redaction": "secrets redacted",
+            "apps": {
+                "foxglove-bridge.json": {"schema_version": "1", "id": "foxglove-bridge", "source": "builtin"},
+                "camera-streamer.json": {
+                    "schema_version": "1",
+                    "id": "camera-streamer",
+                    "name": "Camera Streamer",
+                    "version": "1.0.0",
+                    "runtime": "container",
+                    "container": {"image": "registry.yari.io/camera:1", "environment": {"ATLAS_TOKEN": {"configured": True}}},
+                    "permissions": ["network.client"],
+                },
+            },
+        }
+
+        preview = self.module.validate_config_import(export)
+        self.assertEqual(preview["summary"]["restorable_now"], 1)
+        self.assertEqual(preview["app_manifest_import"]["valid"][0]["app"]["id"], "camera-streamer")
+        self.assertIn("foxglove-bridge", [item["id"] for item in preview["app_manifest_import"]["skipped"]])
+
+        result = self.module.apply_config_import({"export": export, "apply_sections": ["app_manifests"], "acknowledge_apply": True})
+        self.assertEqual(result["results"]["app_manifests"]["installed"][0]["id"], "camera-streamer")
+        restored = json.loads((self.module.APP_MANIFEST_DIR / "camera-streamer.json").read_text())
+        self.assertNotIn("environment", restored["container"])
+
+        export["apps"]["bad.json"] = {"schema_version": "1", "id": "bad app"}
+        preview = self.module.validate_config_import(export)
+        self.assertFalse(next(section for section in preview["sections"] if section["name"] == "app_manifests")["restore_supported"])
+        self.assertTrue(preview["app_manifest_import"]["errors"])
+        with self.assertRaises(ValueError):
+            self.module.apply_config_import({"export": export, "apply_sections": ["app_manifests"], "acknowledge_apply": True})
 
     def test_config_export_includes_mavlink_endpoints_for_migration(self):
         self.module.write_mavlink_endpoints({"endpoints": [{"name": "udp", "type": "udp", "host": "0.0.0.0", "port": 14550, "enabled": True}]})

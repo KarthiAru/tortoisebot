@@ -306,7 +306,7 @@ The Maintenance page includes a local migration workflow for moving a device set
 
 The export is intentionally redacted. It includes device profile, network policy, static network config, MAVLink endpoints, OTA policy/state, upload/download queues, app manifests, app/package metadata, portal build metadata, and current status snapshots. It does not include usable Wi-Fi passwords, SSH private material, Atlas tokens, Foxglove tokens, or app environment secrets.
 
-Restore support is deliberately staged. `POST /api/config/import/validate` reports which sections are present, which endpoints can apply them, which sections are restorable now versus future-only, and which secrets must be re-entered. `POST /api/config/import/apply` requires `acknowledge_apply: true` plus an explicit `apply_sections` list and applies only supported non-secret sections: device profile, network policy, static network config, MAVLink endpoints, and OTA policy. App manifests and all secrets remain review/manual-entry work.
+Restore support is deliberately staged. `POST /api/config/import/validate` reports which sections are present, which endpoints can apply them, which sections are restorable now versus future-only, and which secrets must be re-entered. `POST /api/config/import/apply` requires `acknowledge_apply: true` plus an explicit `apply_sections` list and applies only supported non-secret sections: device profile, network policy, static network config, MAVLink endpoints, OTA policy, and validated external app manifests. Built-in app manifests are skipped because the base image owns them, and app secrets/environment tokens must be re-entered manually.
 
 CLI examples:
 
