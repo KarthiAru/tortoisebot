@@ -18,6 +18,56 @@ This implementation is the first YARI OS core portal slice:
 - Optional `YARI_PORTAL_API_TOKEN` protection for mutating local portal API calls in production images.
 - Dedicated /api/security/status snapshot for local/Atlas support flows, reporting sanitized portal API, setup AP, credential-file permission, SSH, and pairing posture.
 
+## Current Progress And Pause Point
+
+As of this checkpoint, the YARI OS device portal has moved from a minimal static Wi-Fi form to a Svelte-built local portal served by the Python `yari-onboarding` service. The immediate platform direction is correct, but the next work should be stabilization and polish of the existing UI rather than adding more YARI OS surface area.
+
+Working or implemented foundations:
+
+- First-boot and recovery AP flow using NetworkManager, with fallback network tooling for Ubuntu Server images.
+- Local portal available on the setup AP at `http://192.168.4.1` and on the client LAN through `http://<hostname>.local` when mDNS is available.
+- Svelte + TypeScript + Vite + Tailwind portal source under `portal/`, with generated static assets copied to `/opt/yari/onboarding/web` by the installer.
+- Built `portal/dist` is part of the repo workflow so a robot install should not require Node.js unless `YARI_PORTAL_BUILD_ON_DEVICE=1` is explicitly requested.
+- Basic Atlas-aligned styling direction: neutral operational UI, light/dark theme support, YARI OS logos, and color reserved for status/error/warning/destructive states.
+- Local API scaffolding for setup, status, network, services, logs, maintenance, autopilot, ROS 2, video, data, apps, OTA, recovery policy, security status, and support bundles.
+- App manifest v1 groundwork, local app examples, app package validation/signing hooks, service-backed app actions, and early container permission review logic.
+- Local portal API token generation mode and sanitized `/api/security/status` output for production hardening.
+
+Known rough edges before expanding scope:
+
+- Treat the portal as alpha. Several panels are scaffolds or partially wired and need end-to-end testing on the actual robot.
+- Every current form should show clear success, failure, and pending states. Avoid silent failures and raw JSON as the primary operator experience.
+- Network setup needs stronger UX around AP/client mode, reboot/switch progress, invalid passwords, hidden SSIDs, DHCP timeout, and recovery AP behavior.
+- Service controls need clear permission/error handling for non-root users and systemd access-denied cases.
+- ROS 2, video, Foxglove, Atlas, MCAP recording, app, and OTA panels should be verified against real robot commands and logs before more features are added.
+- The UI needs a visual pass against the YARI Atlas design system: spacing, typography, table density, tabs, cards, button hierarchy, status pills, empty states, and mobile/AP captive-portal sizing.
+- The install/update path should make it obvious which portal build is installed, how to refresh browser cache, and how to verify `/opt/yari/onboarding/web/portal-version.json`.
+
+Next priority:
+
+1. Freeze new platform feature additions temporarily.
+2. Make all existing Web UI tabs work reliably on the current TortoiseBot.
+3. Replace raw/debug output with operator-friendly cards, tables, toasts, and remediation steps.
+4. Add focused tests for each existing API contract and portal workflow before adding new endpoints.
+5. Only after the current portal feels dependable, resume YARI OS platform expansion: extension runtime, OTA artifacts, production security posture, and Atlas-managed orchestration.
+
+Robot refresh checklist for this checkpoint:
+
+```bash
+cd ~/tb_ws/src/tortoisebot
+git pull --ff-only origin mcap-logging
+sudo provisioning/yari-onboarding/scripts/install-yari-onboarding
+sudo systemctl restart yari-onboarding.service
+cat /opt/yari/onboarding/web/portal-version.json
+```
+
+Then open a cache-busted URL from the browser:
+
+```text
+http://tortoisebot.local/?v=latest
+http://192.168.4.1/?v=latest
+```
+
 ## Dependencies
 
 Preferred runtime dependency:
