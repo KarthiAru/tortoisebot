@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-07-11T10:28:51.534Z",
+  "generated_at": "2026-07-11T10:34:02.472Z",
   "asset_count": 12,
-  "total_bytes": 317685,
+  "total_bytes": 317750,
   "assets": [
     {
       "path": "assets/yari-os-logo-dark.svg",
@@ -28,15 +28,15 @@
       "gzip": true
     },
     {
-      "path": "assets/yari-portal-Dhaks8Wj.css",
-      "bytes": 13709,
-      "sha256": "e7167634e05168f9cd00161709ab844cd294f92dc56f7174a6868bb1d629b44d",
+      "path": "assets/yari-portal-D9_xtGBI.css",
+      "bytes": 13757,
+      "sha256": "0576fbbf15e8eb2dad721769ef924fdb9da78d762749eba12014d866736d1934",
       "gzip": false
     },
     {
-      "path": "assets/yari-portal-Dhaks8Wj.css.gz",
-      "bytes": 3635,
-      "sha256": "09855cfdfdfffd2b09693507c64d32d0eeb170cf7a8a7cac76ddca38173934e3",
+      "path": "assets/yari-portal-D9_xtGBI.css.gz",
+      "bytes": 3649,
+      "sha256": "8bb3dbad80a5010ecb864477718f9d5041f58b6db0bacfe5776888841e914dd7",
       "gzip": true
     },
     {
@@ -54,25 +54,25 @@
     {
       "path": "index.html",
       "bytes": 468,
-      "sha256": "c19ffa6dbae1d57edeecedbd504489e3256a95eda9d2956cb3e8baf8602a6f6c",
+      "sha256": "457ab3df64c9794eea85ccbe16f217538ccff4b381527f8e3795b3ae59bdc074",
       "gzip": false
     },
     {
       "path": "index.html.gz",
-      "bytes": 297,
-      "sha256": "b07036bb57e8e5106b228caee8045d1b412a6f0bd6be45b29efc969d33d4032a",
+      "bytes": 299,
+      "sha256": "53e110bad8403778809966ef00655a5caa33afdbfe6fdd1f135ea6336f8668ad",
       "gzip": true
     },
     {
       "path": "portal-version.json",
       "bytes": 186,
-      "sha256": "6d0318f846b5b80139724766a0cc808047081baa6bdf34795d2467692ee8a9b2",
+      "sha256": "194a1f90ddb414b84ac88f4a8e160eadb48b4de073841019ad1aa7cf3a859f1d",
       "gzip": false
     },
     {
       "path": "portal-version.json.gz",
-      "bytes": 161,
-      "sha256": "3e7945e589d232e6efda6842378ee11f7c996f45ca68d1c9fb2c1c252dd633a3",
+      "bytes": 162,
+      "sha256": "50ca315d1682688fafc506a9b6b5d4ec02018bba5753674ecb85067b6cf76805",
       "gzip": true
     }
   ]

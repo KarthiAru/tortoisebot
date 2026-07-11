@@ -577,3 +577,7 @@ button:disabled {
 .technical-details pre {
   padding: 0 12px 12px;
 }
+
+.technical-details:not([open]) pre {
+  display: none;
+}
