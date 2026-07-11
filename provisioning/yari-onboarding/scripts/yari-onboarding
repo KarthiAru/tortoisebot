@@ -3933,6 +3933,9 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/ros/status":
                 self.send_json(200, ros_status())
                 return
+            if path == "/api/tortoisebot/status":
+                self.send_json(200, tortoisebot_status())
+                return
             if path == "/api/ros/topics":
                 self.send_json(200, ros_topics())
                 return
@@ -4075,6 +4078,18 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/ros/recording/start":
                 self.send_json(200, start_ros_recording(payload))
+                return
+            if path == "/api/tortoisebot/operation":
+                self.send_json(200, run_tortoisebot_operation(payload))
+                return
+            if path == "/api/tortoisebot/atlas-bridge":
+                action = str(payload.get("action") or "start")
+                if action == "stop":
+                    self.send_json(200, stop_atlas_bridge())
+                elif action == "start":
+                    self.send_json(200, start_atlas_bridge(payload))
+                else:
+                    self.send_json(400, {"ok": False, "error": "action must be start or stop"})
                 return
             if path == "/api/ros/recording/stop":
                 self.send_json(200, stop_ros_recording())

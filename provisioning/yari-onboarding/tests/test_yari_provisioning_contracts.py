@@ -9,6 +9,7 @@ INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install_tortoisebot_humble.sh"
 IMAGE_SCRIPT = REPO_ROOT / "scripts" / "build_tortoisebot_image.sh"
 ONBOARDING_INSTALLER = REPO_ROOT / "yari-onboarding" / "scripts" / "install-yari-onboarding"
 PORTAL_BUILD_HELPER = REPO_ROOT / "yari-onboarding" / "scripts" / "build-yari-portal"
+ONBOARDING_SERVER = REPO_ROOT / "yari-onboarding" / "scripts" / "yari-onboarding"
 
 
 def apt_install_packages(script_text):
@@ -103,6 +104,17 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("build-yari-portal", image_text)
         self.assertIn("build-yari-portal", installer_text)
         self.assertIn("/usr/local/bin/build-yari-portal", installer_text)
+
+    def test_tortoisebot_portal_endpoints_are_wired_to_http_handler(self):
+        text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        self.assertIn('if path == "/api/tortoisebot/status":', text)
+        self.assertIn('self.send_json(200, tortoisebot_status())', text)
+        self.assertIn('if path == "/api/tortoisebot/operation":', text)
+        self.assertIn('self.send_json(200, run_tortoisebot_operation(payload))', text)
+        self.assertIn('if path == "/api/tortoisebot/atlas-bridge":', text)
+        self.assertIn('start_atlas_bridge(payload)', text)
+        self.assertIn('stop_atlas_bridge()', text)
+
     def test_image_builder_copies_prebuilt_portal_into_rootfs(self):
         text = IMAGE_SCRIPT.read_text(encoding="utf-8")
         self.assertIn("build_yari_portal", text)

@@ -1657,7 +1657,7 @@
           {/each}
         </div>
         <p>Generated credentials are stored on the device and intentionally hidden from API responses and support bundles.</p>
-        <pre>{pretty(securityStatus)}</pre>
+        <details class="technical-details"><summary>Security diagnostics</summary><pre>{pretty(securityStatus)}</pre></details>
       </div>
       <div class="card">
         <h2>Device Profile</h2>
@@ -1698,7 +1698,7 @@
           </div>
         </div>
       </div>
-      <div class="card wide"><h2>Raw Device Status</h2><pre>{pretty({ device, portal: portalVersion })}</pre></div>
+      <div class="card wide"><h2>Device Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty({ device, portal: portalVersion })}</pre></details></div>
     </section>
   {:else if activeTab === 'network'}
     <section class="grid">
@@ -1776,7 +1776,7 @@
         </dl>
       </div>
 
-      <div class="card wide"><h2>Raw Network Status</h2><pre>{pretty({ network, diagnostics, wifiScan })}</pre></div>
+      <div class="card wide"><h2>Network Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty({ network, diagnostics, wifiScan })}</pre></details></div>
     </section>
   {:else if activeTab === 'services'}
     <section class="grid">
@@ -1933,7 +1933,7 @@
             </tbody>
           </table>
         {/if}
-        <pre>{pretty(configImportPreview)}</pre>
+        <details class="technical-details"><summary>Import diagnostics</summary><pre>{pretty(configImportPreview)}</pre></details>
       </div>
 
       <div class="card wide">
@@ -1987,8 +1987,8 @@
         <div class="row"><button on:click={saveMavlink}>Save endpoints</button></div>
       </div>
 
-      <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
-      <div class="card wide"><h2>Raw OTA Status</h2><pre>{pretty(otaStatus)}</pre></div>
+      <div class="card wide result-card"><div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div><div class="summary-grid">{#each resultItems(actionOutput) as item}<div><small>{item.label}</small><strong>{item.value}</strong></div>{/each}</div>{#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}<details class="technical-details"><summary>Technical details</summary><pre>{pretty(actionOutput)}</pre></details></div>
+      <div class="card wide"><h2>OTA Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty(otaStatus)}</pre></details></div>
     </section>
   {:else if activeTab === 'autopilot'}
     <section class="grid">
@@ -2073,9 +2073,9 @@
         </form>
       </div>
 
-      <div class="card wide"><h2>Raw Autopilot Status</h2><pre>{pretty(autopilot)}</pre></div>
-      <div class="card wide"><h2>Raw MAVLink Config</h2><pre>{pretty(mavlink)}</pre></div>
-      <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
+      <div class="card wide"><h2>Autopilot Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty(autopilot)}</pre></details></div>
+      <div class="card wide"><h2>MAVLink Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty(mavlink)}</pre></details></div>
+      <div class="card wide result-card"><div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div><div class="summary-grid">{#each resultItems(actionOutput) as item}<div><small>{item.label}</small><strong>{item.value}</strong></div>{/each}</div>{#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}<details class="technical-details"><summary>Technical details</summary><pre>{pretty(actionOutput)}</pre></details></div>
     </section>
   {:else if activeTab === 'tortoisebot'}
     <section class="grid">
@@ -2356,7 +2356,7 @@
         </form>
       </div>
 
-      <div class="card wide"><h2>Raw Video Status</h2><pre>{pretty(video)}</pre></div>
+      <div class="card wide"><h2>Video Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty(video)}</pre></details></div>
     </section>
   {:else if activeTab === 'data'}
     <section class="grid">
@@ -2486,8 +2486,8 @@
         {/if}
       </div>
 
-      <div class="card wide"><h2>Last Result</h2><pre>{pretty(actionOutput)}</pre></div>
-      <div class="card wide"><h2>Raw Data Status</h2><pre>{pretty(dataStatus)}</pre></div>
+      <div class="card wide result-card"><div class="app-card-title"><h2>Last Result</h2><span class={`pill ${resultStatus(actionOutput).className}`}>{resultStatus(actionOutput).label}</span></div><div class="summary-grid">{#each resultItems(actionOutput) as item}<div><small>{item.label}</small><strong>{item.value}</strong></div>{/each}</div>{#if resultText(actionOutput)}<pre class="code-output">{resultText(actionOutput)}</pre>{/if}<details class="technical-details"><summary>Technical details</summary><pre>{pretty(actionOutput)}</pre></details></div>
+      <div class="card wide"><h2>Data Details</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty(dataStatus)}</pre></details></div>
     </section>
   {:else if activeTab === 'apps'}
     <section class="grid">
@@ -2614,7 +2614,7 @@
             </article>
           {/each}
         </div>
-        <pre>{pretty({ registry_dir: appRegistry?.registry_dir, errors: appRegistry?.errors })}</pre>
+        <details class="technical-details"><summary>Registry diagnostics</summary><pre>{pretty({ registry_dir: appRegistry?.registry_dir, errors: appRegistry?.errors })}</pre></details>
       </div>
 
       <div class="section-block wide">
@@ -2671,12 +2671,12 @@
             </article>
           {/each}
         </div>
-        <pre>{pretty({ package_dir: appPackages?.package_dir, supported_extensions: appPackages?.supported_extensions, signature_required: appPackages?.signature_required, signature_verification_required: appPackages?.signature_verification_required, signature_public_key_file: appPackages?.signature_public_key_file, errors: appPackages?.errors })}</pre>
+        <details class="technical-details"><summary>Package diagnostics</summary><pre>{pretty({ package_dir: appPackages?.package_dir, supported_extensions: appPackages?.supported_extensions, signature_required: appPackages?.signature_required, signature_verification_required: appPackages?.signature_verification_required, signature_public_key_file: appPackages?.signature_public_key_file, errors: appPackages?.errors })}</pre></details>
       </div>
 
       <div class="card"><h2>Install Manifest</h2><textarea bind:value={appManifestText} rows="14"></textarea><div class="row compact"><button class="secondary" on:click={validateAppManifest}>Validate manifest</button><button on:click={installAppManifest}>Install / update manifest</button></div></div>
-      <div class="card"><h2>Manifest Directory</h2><pre>{pretty({ schema_version: apps?.schema_version, manifest_dir: apps?.manifest_dir, errors: apps?.errors })}</pre></div>
-      <div class="card wide"><h2>App Output</h2><pre>{pretty(appOutput)}</pre></div>
+      <div class="card"><h2>Manifest Directory</h2><details class="technical-details"><summary>Technical details</summary><pre>{pretty({ schema_version: apps?.schema_version, manifest_dir: apps?.manifest_dir, errors: apps?.errors })}</pre></details></div>
+      <div class="card wide result-card"><div class="app-card-title"><h2>App Output</h2><span class={`pill ${resultStatus(appOutput).className}`}>{resultStatus(appOutput).label}</span></div><div class="summary-grid">{#each resultItems(appOutput) as item}<div><small>{item.label}</small><strong>{item.value}</strong></div>{/each}</div>{#if resultText(appOutput)}<pre class="code-output">{resultText(appOutput)}</pre>{/if}<details class="technical-details"><summary>Technical details</summary><pre>{pretty(appOutput)}</pre></details></div>
     </section>
   {/if}
 </main>

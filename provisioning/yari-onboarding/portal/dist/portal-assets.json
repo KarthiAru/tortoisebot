@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-07-11T10:08:29.451Z",
+  "generated_at": "2026-07-11T10:28:51.534Z",
   "asset_count": 12,
-  "total_bytes": 313775,
+  "total_bytes": 317685,
   "assets": [
     {
       "path": "assets/yari-os-logo-dark.svg",
@@ -28,18 +28,6 @@
       "gzip": true
     },
     {
-      "path": "assets/yari-portal-BNpMx4jF.js",
-      "bytes": 157398,
-      "sha256": "92da868b8083bcdc171bba5865d14067238dd6cc2a0b2e206c903da9cb76157e",
-      "gzip": false
-    },
-    {
-      "path": "assets/yari-portal-BNpMx4jF.js.gz",
-      "bytes": 47788,
-      "sha256": "2e528ecce51e981e34dff1a2cfe9bc7572ac9160dcdaa38c2ffe034ccc4c3a7c",
-      "gzip": true
-    },
-    {
       "path": "assets/yari-portal-Dhaks8Wj.css",
       "bytes": 13709,
       "sha256": "e7167634e05168f9cd00161709ab844cd294f92dc56f7174a6868bb1d629b44d",
@@ -52,27 +40,39 @@
       "gzip": true
     },
     {
+      "path": "assets/yari-portal-DWMWT6L-.js",
+      "bytes": 160736,
+      "sha256": "fa16453afd8477c42d1dbf716ddc0a3407e4ec1a7c6e0fea1d6d0efa4eea5f8e",
+      "gzip": false
+    },
+    {
+      "path": "assets/yari-portal-DWMWT6L-.js.gz",
+      "bytes": 48363,
+      "sha256": "c040dbf9350c0b49f632cf3bd1e82908dab54a680bafba5b6afe2f57dca94c2c",
+      "gzip": true
+    },
+    {
       "path": "index.html",
       "bytes": 468,
-      "sha256": "f81733c16d6e9fe126762d70a0c62729a52a4758bff72bed313dfe37efbe3f17",
+      "sha256": "c19ffa6dbae1d57edeecedbd504489e3256a95eda9d2956cb3e8baf8602a6f6c",
       "gzip": false
     },
     {
       "path": "index.html.gz",
-      "bytes": 299,
-      "sha256": "615188bbd5eb51df279c23ddd734b556f06d63acbb7fa53f371e0fa92f6f2fbd",
+      "bytes": 297,
+      "sha256": "b07036bb57e8e5106b228caee8045d1b412a6f0bd6be45b29efc969d33d4032a",
       "gzip": true
     },
     {
       "path": "portal-version.json",
       "bytes": 186,
-      "sha256": "028ea1488e3aea7267250c775b704f6df342e61e25c90a6f07e0a0a92e05f052",
+      "sha256": "6d0318f846b5b80139724766a0cc808047081baa6bdf34795d2467692ee8a9b2",
       "gzip": false
     },
     {
       "path": "portal-version.json.gz",
-      "bytes": 162,
-      "sha256": "9a0c5af0ba01e1b71543254f8c32277b03b3144ce335fce5ae57f3716f2d8e7b",
+      "bytes": 161,
+      "sha256": "3e7945e589d232e6efda6842378ee11f7c996f45ca68d1c9fb2c1c252dd633a3",
       "gzip": true
     }
   ]
