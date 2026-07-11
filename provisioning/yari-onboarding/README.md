@@ -190,8 +190,11 @@ sudo systemctl restart yari-onboarding.service
 Local registry update detection:
 
 - `/api/apps/registry` compares each registry manifest with the installed manifest of the same app ID.
+- `/api/apps` also exposes installed app update metadata when a matching local registry manifest exists.
 - The comparison uses a normalized SHA-256 manifest digest, not only the version string.
-- Registry cards expose `installed_version`, `registry_version`, `manifest_digest`, `registry_digest`, and `update_available` so the portal and Atlas can show whether an app manifest should be applied.
+- Registry and installed-app cards expose `installed_version`, `registry_version`, `manifest_digest`, `registry_digest`, and `update_available` so the portal and Atlas can show whether an app manifest should be applied.
+- `POST /api/apps/validate` normalizes and validates a manifest without persisting it, reporting whether install/update would be allowed.
+- `POST /api/apps/<id>/update` applies the matching registry manifest to an already-installed app only when the registry digest differs.
 - This is intentionally local-first; cloud registry metadata and signed app packages can build on the same fields later.
 
 Minimal container manifest:
@@ -338,9 +341,11 @@ By default, development images keep the local portal API open on the device LAN/
 | `GET /api/apps/registry` | Local app registry from `/opt/yari/onboarding/apps/examples`, with install state and validation errors. |
 | `GET /api/apps/packages` | Local `.yariapp`/tar package inventory from `/var/lib/yari/app-packages`, including package SHA-256, manifest SHA-256, signature/verification status, embedded manifest, install state, and update status. |
 | `POST /api/apps/registry/<id>/install` | Install or update one local registry app manifest into `/etc/yari/apps.d`. |
+| `POST /api/apps/<id>/update` | Apply a matching local registry manifest to an installed app when update metadata reports a changed registry digest. |
 | `POST /api/apps/packages/upload` | Upload a base64 `.yariapp`/tar package into `/var/lib/yari/app-packages` after validating the package archive, manifest, checksum, and signature policy. |
 | `POST /api/apps/packages/<filename>/install` | Install or update the embedded manifest from a local app package without extracting arbitrary payload files. |
 | `POST /api/apps/packages/<filename>/delete` | Remove a local package file from `/var/lib/yari/app-packages`; installed app manifests are left unchanged. |
+| `POST /api/apps/validate` | Normalize and validate an external YARI App Manifest v1 JSON file without persisting it. |
 | `POST /api/apps/install` | Install or update a validated external YARI App Manifest v1 JSON file into `/etc/yari/apps.d`. Built-in app IDs cannot be replaced. |
 | `POST /api/apps/<id>/uninstall` | Remove an external manifest from `/etc/yari/apps.d`; built-in apps cannot be removed. |
 | `POST /api/apps/<id>/start` | Start services declared by an app manifest. Also supports `stop` and `restart`. Container lifecycle actions are enabled when Docker or Podman is installed and the manifest has a valid `container.image`. |

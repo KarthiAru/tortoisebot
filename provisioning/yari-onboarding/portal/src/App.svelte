@@ -937,9 +937,22 @@
     }
   }
 
+  async function validateAppManifest() {
+    try {
+      appOutput = await post('/api/apps/validate', { manifest: JSON.parse(appManifestText), replace: true });
+    } catch (err) {
+      appOutput = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   async function uninstallApp(appId: string) {
     if (!confirm(`Uninstall app manifest ${appId}? Services and containers are not removed.`)) return;
     appOutput = await post(`/api/apps/${encodeURIComponent(appId)}/uninstall`);
+    await refreshApps();
+  }
+
+  async function updateInstalledApp(appId: string) {
+    appOutput = await post(`/api/apps/${encodeURIComponent(appId)}/update`);
     await refreshApps();
   }
 
@@ -1894,6 +1907,7 @@
                 <button class="secondary" disabled={!app.actions?.stop} on:click={() => appAction(app.id, 'stop')}>Stop</button>
                 <button class="secondary" disabled={!app.actions?.restart} on:click={() => appAction(app.id, 'restart')}>Restart</button>
                 <button class="secondary" disabled={!app.actions?.logs} on:click={() => appLogs(app.id)}>Logs</button>
+                {#if app.update?.update_available}<button class="secondary" disabled={!app.actions?.update} on:click={() => updateInstalledApp(app.id)}>Apply update</button>{/if}
                 <button class="secondary" disabled={!app.actions?.uninstall} on:click={() => uninstallApp(app.id)}>Uninstall</button>
               </div>
             </article>
@@ -1987,7 +2001,7 @@
         <pre>{pretty({ package_dir: appPackages?.package_dir, supported_extensions: appPackages?.supported_extensions, signature_required: appPackages?.signature_required, signature_verification_required: appPackages?.signature_verification_required, signature_public_key_file: appPackages?.signature_public_key_file, errors: appPackages?.errors })}</pre>
       </div>
 
-      <div class="card"><h2>Install Manifest</h2><textarea bind:value={appManifestText} rows="14"></textarea><button on:click={installAppManifest}>Install / update manifest</button></div>
+      <div class="card"><h2>Install Manifest</h2><textarea bind:value={appManifestText} rows="14"></textarea><div class="row compact"><button class="secondary" on:click={validateAppManifest}>Validate manifest</button><button on:click={installAppManifest}>Install / update manifest</button></div></div>
       <div class="card"><h2>Manifest Directory</h2><pre>{pretty({ schema_version: apps?.schema_version, manifest_dir: apps?.manifest_dir, errors: apps?.errors })}</pre></div>
       <div class="card wide"><h2>App Output</h2><pre>{pretty(appOutput)}</pre></div>
     </section>

@@ -201,6 +201,36 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertFalse(catalog["container_runtime"]["available"])
         self.assertTrue(any("schema_version" in item["error"] for item in catalog["errors"]))
 
+    def test_app_permission_review_summarizes_risk(self):
+        app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1", "network": "host"},
+            "devices": ["/dev/video0"],
+            "volumes": ["/var/lib/yari/apps/camera-streamer:/data"],
+            "permissions": ["camera.read", "network.listen", "network.host", "storage.persistent"],
+        })
+        review = app["permission_review"]
+        self.assertEqual(review["risk"], "high")
+        permissions = {item["permission"]: item for item in review["items"]}
+        self.assertEqual(permissions["camera.read"]["risk"], "medium")
+        self.assertEqual(permissions["network.host"]["risk"], "high")
+        self.assertEqual(permissions["storage.persistent"]["risk"], "medium")
+
+        simple = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "simple-app",
+            "name": "Simple App",
+            "version": "0.1.0",
+            "runtime": "service-bundle",
+            "services": ["demo.service"],
+            "permissions": ["ros.read"],
+        })
+        self.assertEqual(simple["permission_review"]["risk"], "low")
+
     def test_app_manifest_validation_rejects_unsafe_fields(self):
         with self.assertRaises(ValueError):
             self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-permission", "runtime": "container", "container": {"image": "demo"}, "permissions": ["shell"]})
@@ -291,6 +321,45 @@ class YariOnboardingTests(unittest.TestCase):
             app = self.module.normalize_app_manifest(json.loads(path.read_text()), str(path))
             self.assertEqual(app["schema_version"], "1")
             self.assertIn(app["runtime"], {"core-service", "service-bundle", "container"})
+
+    def test_validate_app_manifest_reports_install_readiness(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+            "permissions": ["camera.read"],
+        }
+        validation = self.module.validate_app_manifest_payload({"manifest": manifest})
+        self.assertTrue(validation["ok"])
+        self.assertTrue(validation["can_install"])
+        self.assertFalse(validation["existing"])
+        self.assertEqual(validation["app"]["id"], "camera-streamer")
+        self.module.install_app_manifest({"manifest": manifest})
+        validation = self.module.validate_app_manifest_payload({"manifest": manifest})
+        self.assertFalse(validation["can_install"])
+        self.assertTrue(validation["existing"])
+        self.assertIn("already exists", validation["reason"])
+        validation = self.module.validate_app_manifest_payload({"manifest": manifest, "replace": True})
+        self.assertTrue(validation["can_install"])
+        self.assertTrue(validation["replace"])
+
+    def test_validate_app_manifest_blocks_builtin_replacement(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "log-manager",
+            "name": "Log Manager",
+            "version": "99.0.0",
+            "runtime": "service-bundle",
+            "services": ["yari-log-manager"],
+        }
+        validation = self.module.validate_app_manifest_payload({"manifest": manifest, "replace": True})
+        self.assertFalse(validation["can_install"])
+        self.assertIn("built-in", validation["reason"])
+        with self.assertRaises(ValueError):
+            self.module.install_app_manifest({"manifest": manifest, "replace": True})
 
     def test_app_registry_lists_local_manifests_and_install_state(self):
         self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
@@ -523,6 +592,29 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertTrue(packages["errors"])
         with self.assertRaises(ValueError):
             self.module.install_app_package("bad.yariapp")
+
+    def test_update_installed_app_applies_registry_update(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        registry_manifest = self.module.APP_REGISTRY_DIR / "camera.json"
+        registry_manifest.write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"0.1.0","runtime":"container","container":{"image":"registry.yari.io/camera:1"},"permissions":["camera.read"]}')
+        self.module.install_registry_app("camera-streamer")
+        registry_manifest.write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"0.2.0","runtime":"container","container":{"image":"registry.yari.io/camera:2"},"permissions":["camera.read"]}')
+        catalog = self.module.app_catalog()
+        app = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
+        self.assertTrue(app["update"]["update_available"])
+        self.assertTrue(app["actions"]["update"])
+        result = self.module.update_installed_app("camera-streamer")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["app"]["version"], "0.2.0")
+        installed = json.loads((self.module.APP_MANIFEST_DIR / "camera-streamer.json").read_text())
+        self.assertEqual(installed["version"], "0.2.0")
+        self.assertEqual(installed["container"]["image"], "registry.yari.io/camera:2")
+        catalog = self.module.app_catalog()
+        app = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
+        self.assertFalse(app["update"]["update_available"])
+        self.assertFalse(app["actions"]["update"])
+        with self.assertRaises(ValueError):
+            self.module.update_installed_app("camera-streamer")
 
     def test_app_registry_reports_invalid_manifests(self):
         self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)

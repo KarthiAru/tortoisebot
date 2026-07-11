@@ -110,6 +110,25 @@ APP_VOLUME_HOST_PREFIXES = (
     "/run/yari/apps/",
 )
 
+APP_PERMISSION_LABELS = {
+    "camera.read": ("medium", "Camera device access"),
+    "serial.read": ("medium", "Serial device read access"),
+    "serial.write": ("medium", "Serial device write access"),
+    "serial.read-write": ("high", "Serial device read/write access"),
+    "can.read-write": ("high", "CAN bus read/write access"),
+    "gpu.access": ("high", "GPU/device accelerator access"),
+    "mavlink.read": ("medium", "MAVLink telemetry read access"),
+    "mavlink.write": ("high", "MAVLink command/control access"),
+    "network.client": ("low", "Outbound network access"),
+    "network.listen": ("medium", "Network listener/port exposure"),
+    "network.host": ("high", "Host network namespace access"),
+    "storage.persistent": ("medium", "Persistent app storage mount"),
+    "system.capabilities": ("high", "Additional Linux capabilities"),
+    "system.privileged": ("high", "Privileged container access"),
+    "logs.upload": ("medium", "Cloud log upload access"),
+    "atlas.pair": ("medium", "Atlas pairing/token access"),
+}
+
 BUILTIN_APP_MANIFESTS = [
     {
         "schema_version": APP_MANIFEST_SCHEMA_VERSION,
@@ -1159,6 +1178,27 @@ def service_logs(name, lines=120):
     return {"ok": result["ok"], "name": name, "unit": unit, "logs": result["stdout"], "error": result["stderr"]}
 
 
+def app_permission_review(permissions, runtime="service-bundle", container=None, devices=None, volumes=None):
+    severity_rank = {"low": 0, "medium": 1, "high": 2}
+    items = []
+    for permission in permissions:
+        severity, reason = APP_PERMISSION_LABELS.get(permission, ("low", "Declared app permission"))
+        items.append({"permission": permission, "risk": severity, "reason": reason})
+    container = container or {}
+    if runtime == "container" and container.get("privileged") and not any(item["permission"] == "system.privileged" for item in items):
+        items.append({"permission": "system.privileged", "risk": "high", "reason": "Privileged container access"})
+    if runtime == "container" and container.get("network") == "host" and not any(item["permission"] == "network.host" for item in items):
+        items.append({"permission": "network.host", "risk": "high", "reason": "Host network namespace access"})
+    if devices and not any(item["permission"] in {"camera.read", "serial.read-write", "can.read-write", "gpu.access"} for item in items):
+        items.append({"permission": "devices", "risk": "medium", "reason": "Container device mappings"})
+    if volumes and not any(item["permission"] == "storage.persistent" for item in items):
+        items.append({"permission": "volumes", "risk": "medium", "reason": "Container volume mappings"})
+    risk = "low"
+    if items:
+        risk = max((item["risk"] for item in items), key=lambda value: severity_rank[value])
+    return {"risk": risk, "items": items}
+
+
 def validate_app_device_path(device, permissions):
     device = str(device or "").strip()
     if not device or "\n" in device or "\r" in device or not device.startswith("/dev/"):
@@ -1290,6 +1330,7 @@ def normalize_app_manifest(manifest, source="builtin"):
             environment[env_key] = str(value)
     devices = [validate_app_device_path(item, permissions) for item in manifest.get("devices", []) if str(item).strip()]
     volumes = [validate_app_volume(item, app_id, permissions, runtime) for item in manifest.get("volumes", []) if str(item).strip()]
+    permission_review = app_permission_review(permissions, runtime, container, devices, volumes)
 
     return {
         "schema_version": schema_version,
@@ -1302,6 +1343,7 @@ def normalize_app_manifest(manifest, source="builtin"):
         "services": services,
         "ports": ports,
         "permissions": permissions,
+        "permission_review": permission_review,
         "devices": devices,
         "volumes": volumes,
         "healthcheck": manifest.get("healthcheck", {}) if isinstance(manifest.get("healthcheck", {}), dict) else {},
@@ -1448,6 +1490,7 @@ def app_manifest_digest(app):
         "health",
         "actions",
         "update",
+        "permission_review",
     }
     comparable = {key: value for key, value in app.items() if key not in derived_fields}
     payload = json.dumps(comparable, sort_keys=True, separators=(",", ":"))
@@ -1515,7 +1558,7 @@ def enrich_app(app, registry_app=None):
         "stop": can_run,
         "restart": can_run,
         "logs": bool(app["service_status"]) or (app.get("runtime") == "container" and can_run),
-        "update": external,
+        "update": bool(app["update"].get("update_available")),
     }
     return app
 
@@ -1891,6 +1934,19 @@ def install_registry_app(app_id, replace=False):
     return install_app_manifest({"manifest": registry_app_manifest(app_id), "replace": replace})
 
 
+def update_installed_app(app_id):
+    installed = app_by_id(app_id)
+    registry_app = registry_apps_by_id().get(app_id)
+    if not registry_app:
+        raise ValueError(f"No registry update source found for app '{app_id}'")
+    update = app_update_metadata(installed, registry_app)
+    if not update.get("update_available"):
+        raise ValueError(f"App '{app_id}' is already up to date")
+    result = install_app_manifest({"manifest": registry_app, "replace": True})
+    result["update"] = update
+    return result
+
+
 def app_by_id(app_id):
     for app in raw_app_manifests()[0]:
         if app["id"] == app_id:
@@ -1904,16 +1960,36 @@ def app_manifest_path(app_id):
     return APP_MANIFEST_DIR / f"{app_id}.json"
 
 
-def install_app_manifest(payload):
+def validate_app_manifest_payload(payload):
     manifest = payload.get("manifest") if isinstance(payload, dict) and isinstance(payload.get("manifest"), dict) else payload
     replace = bool(payload.get("replace", False)) if isinstance(payload, dict) else False
     app = normalize_app_manifest(manifest, "pending")
     existing_apps, _ = raw_app_manifests()
     existing = next((item for item in existing_apps if item["id"] == app["id"]), None)
+    can_install = not existing or replace
+    reason = "ready"
     if existing and existing.get("source") == "builtin":
-        raise ValueError(f"Cannot replace built-in app '{app['id']}'")
-    if existing and not replace:
-        raise ValueError(f"App '{app['id']}' already exists; set replace=true to update it")
+        can_install = False
+        reason = f"Cannot replace built-in app '{app['id']}'"
+    elif existing and not replace:
+        reason = f"App '{app['id']}' already exists; set replace=true to update it"
+    return {
+        "ok": True,
+        "app": app,
+        "existing": existing is not None,
+        "existing_source": existing.get("source", "") if existing else "",
+        "replace": replace,
+        "can_install": can_install,
+        "reason": reason,
+    }
+
+
+def install_app_manifest(payload):
+    manifest = payload.get("manifest") if isinstance(payload, dict) and isinstance(payload.get("manifest"), dict) else payload
+    validation = validate_app_manifest_payload(payload)
+    app = validation["app"]
+    if not validation["can_install"]:
+        raise ValueError(validation["reason"])
     APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     target = app_manifest_path(app["id"])
     persisted_keys = {"schema_version", "id", "name", "version", "runtime", "kind", "description", "services", "ports", "permissions", "devices", "volumes", "healthcheck", "container", "ui", "update"}
@@ -3177,6 +3253,9 @@ class Handler(SimpleHTTPRequestHandler):
             if service_match:
                 self.send_json(200, service_action(service_match.group(1), service_match.group(2)))
                 return
+            if path == "/api/apps/validate":
+                self.send_json(200, validate_app_manifest_payload(payload))
+                return
             if path == "/api/apps/install":
                 self.send_json(200, install_app_manifest(payload))
                 return
@@ -3198,6 +3277,10 @@ class Handler(SimpleHTTPRequestHandler):
             app_uninstall_match = re.match(r"^/api/apps/([^/]+)/uninstall$", path)
             if app_uninstall_match:
                 self.send_json(200, uninstall_app_manifest(app_uninstall_match.group(1)))
+                return
+            app_update_match = re.match(r"^/api/apps/([^/]+)/update$", path)
+            if app_update_match:
+                self.send_json(200, update_installed_app(app_update_match.group(1)))
                 return
             app_match = re.match(r"^/api/apps/([^/]+)/(start|stop|restart)$", path)
             if app_match:
