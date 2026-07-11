@@ -56,18 +56,18 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertLess(ensure_call, validate_call)
         self.assertLess(validate_call, copy_call)
 
-    def test_onboarding_installer_rebuilds_stale_svelte_dist_after_git_pull(self):
+    def test_onboarding_installer_accepts_checked_in_svelte_dist_after_git_pull(self):
         text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
         self.assertIn("portal_dist_stale", text)
         self.assertIn("YARI_PORTAL_FORCE_BUILD", text)
         self.assertIn("YARI_PORTAL_BUILD_ON_DEVICE", text)
         self.assertIn("Build it on a development machine first", text)
-        self.assertIn("${PORTAL_SRC}/src", text)
-        self.assertIn("${PORTAL_SRC}/package-lock.json", text)
-        self.assertIn("-newer \"${PORTAL_DIST}/portal-version.json\"", text)
+        self.assertIn("Do not compare source/dist mtimes", text)
+        self.assertIn("Use YARI_PORTAL_FORCE_BUILD=1 for an explicit rebuild", text)
+        self.assertNotIn("-newer \"${PORTAL_DIST}/portal-version.json\"", text)
+        self.assertNotIn("source_paths", text)
         self.assertIn("Building Svelte YARI OS portal", text)
         self.assertLess(text.index("portal_dist_stale"), text.index("ensure_portal_dist"))
-        self.assertLess(text.index("find \"${source_paths[@]}\""), text.rindex("return 1"))
         self.assertLess(text.index("YARI_PORTAL_BUILD_ON_DEVICE"), text.index("if ! install_node20_build_tools"))
 
     def test_onboarding_installer_refreshes_nodesource_keyring_before_opt_in_node_install(self):

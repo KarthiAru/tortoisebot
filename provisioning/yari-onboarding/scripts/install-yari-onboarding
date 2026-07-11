@@ -86,24 +86,10 @@ portal_dist_stale() {
   [[ ! -f "${PORTAL_DIST}/portal-version.json" ]] && return 0
   [[ ! -f "${PORTAL_DIST}/portal-assets.json" ]] && return 0
 
-  local source_paths=()
-  local candidate
-  for candidate in \
-    "${PORTAL_SRC}/src" \
-    "${PORTAL_SRC}/scripts" \
-    "${PORTAL_SRC}/index.html" \
-    "${PORTAL_SRC}/package.json" \
-    "${PORTAL_SRC}/package-lock.json" \
-    "${PORTAL_SRC}/svelte.config.js" \
-    "${PORTAL_SRC}/tsconfig.json" \
-    "${PORTAL_SRC}/vite.config.ts"; do
-    [[ -e "${candidate}" ]] && source_paths+=("${candidate}")
-  done
-
-  if (( ${#source_paths[@]} > 0 )) && find "${source_paths[@]}" -type f -newer "${PORTAL_DIST}/portal-version.json" -print -quit | grep -q .; then
-    return 0
-  fi
-
+  # The portal dist is intentionally committed so deployed robots do not need
+  # Node.js/npm. Do not compare source/dist mtimes here: a fresh git pull can
+  # make source files newer than the committed dist even when the artifact is
+  # correct. Use YARI_PORTAL_FORCE_BUILD=1 for an explicit rebuild.
   return 1
 }
 
