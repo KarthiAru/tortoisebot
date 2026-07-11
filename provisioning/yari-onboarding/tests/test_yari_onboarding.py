@@ -55,6 +55,8 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.SETUP_AP_CREDENTIAL_FILE = root / "setup-ap-credentials.json"
+        self.module.PORTAL_API_TOKEN_FILE = root / "portal-api-token.json"
+        self.module.PORTAL_API_TOKEN = ""
         self.module.HOSTNAME_FILE = root / "hostname"
         self.module.DEVICE_MODEL_PATHS = [root / "device-model"]
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
@@ -141,6 +143,41 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.AP_PASSWORD = "short"
         with self.assertRaises(ValueError):
             self.module.setup_ap_password()
+
+    def test_portal_api_token_modes_are_sanitized_and_persistent(self):
+        self.module.PORTAL_API_TOKEN = ""
+        self.assertEqual(self.module.portal_api_token(), "")
+        open_status = self.module.portal_api_auth_status()
+        self.assertFalse(open_status["protected"])
+        self.assertEqual(open_status["token_source"], "open")
+        self.assertFalse(self.module.PORTAL_API_TOKEN_FILE.exists())
+
+        self.module.PORTAL_API_TOKEN = "configured-token-123"
+        self.assertEqual(self.module.portal_api_token(), "configured-token-123")
+        configured_status = self.module.portal_api_auth_status()
+        self.assertTrue(configured_status["protected"])
+        self.assertEqual(configured_status["token_source"], "configured")
+        self.assertEqual(configured_status["credential_file"], "")
+        self.assertNotIn("token", configured_status)
+        self.assertFalse(self.module.PORTAL_API_TOKEN_FILE.exists())
+
+        self.module.PORTAL_API_TOKEN = "auto"
+        generated = self.module.portal_api_token()
+        self.assertGreaterEqual(len(generated), 32)
+        self.assertEqual(self.module.portal_api_token(), generated)
+        self.assertEqual(oct(self.module.PORTAL_API_TOKEN_FILE.stat().st_mode & 0o777), "0o600")
+        saved = json.loads(self.module.PORTAL_API_TOKEN_FILE.read_text())
+        self.assertEqual(saved["token"], generated)
+        generated_status = self.module.portal_api_auth_status()
+        self.assertTrue(generated_status["protected"])
+        self.assertEqual(generated_status["token_source"], "generated")
+        self.assertEqual(generated_status["credential_file"], str(self.module.PORTAL_API_TOKEN_FILE))
+        self.assertNotIn("token", generated_status)
+
+    def test_portal_api_token_rejects_short_values(self):
+        self.module.PORTAL_API_TOKEN = "short"
+        with self.assertRaises(ValueError):
+            self.module.portal_api_token()
 
     def test_portal_version_includes_asset_summary(self):
         self.module.PORTAL_VERSION_FILE.write_text(json.dumps({
@@ -1501,7 +1538,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertTrue(self.module.request_authorized({}))
         self.assertTrue(self.module.support_bundle_authorized({}))
         self.assertTrue(self.module.sensitive_media_authorized({}))
-        self.module.PORTAL_API_TOKEN = "secret-token"
+        self.module.PORTAL_API_TOKEN = "secret-token-1234"
         self.assertTrue(self.module.portal_version()["api_token_required"])
         self.assertFalse(self.module.request_authorized({}))
         self.assertFalse(self.module.request_authorized({"x-yari-token": "wrong"}))
@@ -1509,12 +1546,12 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertFalse(self.module.support_bundle_authorized({"x-yari-token": "wrong"}))
         self.assertFalse(self.module.sensitive_media_authorized({}))
         self.assertFalse(self.module.sensitive_media_authorized({"x-yari-token": "wrong"}))
-        self.assertTrue(self.module.request_authorized({"x-yari-token": "secret-token"}))
-        self.assertTrue(self.module.request_authorized({"authorization": "Bearer secret-token"}))
-        self.assertTrue(self.module.support_bundle_authorized({"x-yari-token": "secret-token"}))
-        self.assertTrue(self.module.support_bundle_authorized({"authorization": "Bearer secret-token"}))
-        self.assertTrue(self.module.sensitive_media_authorized({"x-yari-token": "secret-token"}))
-        self.assertTrue(self.module.sensitive_media_authorized({"authorization": "Bearer secret-token"}))
+        self.assertTrue(self.module.request_authorized({"x-yari-token": "secret-token-1234"}))
+        self.assertTrue(self.module.request_authorized({"authorization": "Bearer secret-token-1234"}))
+        self.assertTrue(self.module.support_bundle_authorized({"x-yari-token": "secret-token-1234"}))
+        self.assertTrue(self.module.support_bundle_authorized({"authorization": "Bearer secret-token-1234"}))
+        self.assertTrue(self.module.sensitive_media_authorized({"x-yari-token": "secret-token-1234"}))
+        self.assertTrue(self.module.sensitive_media_authorized({"authorization": "Bearer secret-token-1234"}))
 
     def test_network_diagnostics_reports_core_sections(self):
         diagnostics = self.module.network_diagnostics()

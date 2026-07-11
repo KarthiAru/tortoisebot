@@ -531,6 +531,7 @@ def portal_config_status():
         "ssh_authorized_keys": len((Path("/home") / ONBOARDING_USER / ".ssh" / "authorized_keys").read_text().splitlines()) if (Path("/home") / ONBOARDING_USER / ".ssh" / "authorized_keys").exists() else 0,
         "atlas_token": redact_secret(secrets_payload.get("atlas_token")),
         "foxglove_token": redact_secret(secrets_payload.get("foxglove_token")),
+        "api_auth": portal_api_auth_status(),
     }
 
 
@@ -586,13 +587,50 @@ def portal_version():
         "build_time": payload.get("build_time", "unknown"),
         "git_commit": payload.get("git_commit", "unknown"),
         "frontend_stack": payload.get("frontend_stack", "svelte-build-missing"),
-        "api_token_required": bool(portal_api_token()),
+        "api_token_required": portal_api_auth_status()["protected"],
+        "api_auth": portal_api_auth_status(),
         "assets": portal_assets_summary(),
     }
 
 
+def generated_portal_api_token():
+    existing = read_json_file(PORTAL_API_TOKEN_FILE, {})
+    token = str(existing.get("token") or "") if isinstance(existing, dict) else ""
+    if len(token) >= 32:
+        return token
+    token = "yari_" + secrets.token_urlsafe(32)
+    PORTAL_API_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PORTAL_API_TOKEN_FILE.write_text(json.dumps({
+        "token": token,
+        "generated": True,
+        "created": int(time.time()),
+        "note": "Use this as the local portal API token. Keep it off support bundles and web API responses.",
+    }, indent=2) + "\n")
+    os.chmod(PORTAL_API_TOKEN_FILE, 0o600)
+    return token
+
+
 def portal_api_token():
-    return str(os.environ.get("YARI_PORTAL_API_TOKEN", PORTAL_API_TOKEN) or "").strip()
+    value = str(os.environ.get("YARI_PORTAL_API_TOKEN", PORTAL_API_TOKEN) or "").strip()
+    if value.lower() in {"", "open", "none", "off", "disabled"}:
+        return ""
+    if value.lower() in {"auto", "generate", "generated"}:
+        return generated_portal_api_token()
+    if len(value) < 16:
+        raise ValueError("YARI_PORTAL_API_TOKEN must be at least 16 characters, 'auto', or empty/open")
+    return value
+
+
+def portal_api_auth_status():
+    value = str(os.environ.get("YARI_PORTAL_API_TOKEN", PORTAL_API_TOKEN) or "").strip()
+    lowered = value.lower()
+    generated = lowered in {"auto", "generate", "generated"}
+    protected = bool(portal_api_token())
+    return {
+        "protected": protected,
+        "token_source": "generated" if generated and protected else ("configured" if protected else "open"),
+        "credential_file": str(PORTAL_API_TOKEN_FILE) if generated and protected else "",
+    }
 
 
 def header_value(headers, *names):

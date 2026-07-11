@@ -31,6 +31,8 @@ NetworkManager is preferred for YARI OS because it works across Raspberry Pi, Je
 
 Development images may leave the setup AP open by keeping `YARI_ONBOARDING_AP_PASSWORD` empty or setting it to `open`. Production images should not use an open setup AP. Set `YARI_ONBOARDING_AP_PASSWORD=auto` to generate a persistent per-device setup password under `/var/lib/yari/onboarding/setup-ap-credentials.json` with `0600` permissions, or set it to an explicit WPA password of at least 8 characters. The local API and state files report only sanitized AP status such as `open`, `configured`, or `generated`; they do not expose the password. Image/factory tooling can read the credential file to print a QR code or device label.
 
+Production images should also protect mutating local portal APIs. Set `YARI_PORTAL_API_TOKEN=auto` to generate a persistent per-device API token under `/var/lib/yari/onboarding/portal-api-token.json` with `0600` permissions, or set an explicit token of at least 16 characters. The portal version/setup status endpoints expose only sanitized auth metadata such as `open`, `configured`, or `generated`; they do not expose the token. Operators can paste this token into the portal header field or an Atlas-managed local session can provide it through `X-YARI-Token`/`Authorization: Bearer`.
+
 ## Installed Files
 
 ```text

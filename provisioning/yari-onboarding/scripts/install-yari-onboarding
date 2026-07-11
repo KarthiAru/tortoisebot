@@ -147,8 +147,9 @@ install -d -m 0755 /etc/yari /etc/yari/apps.d /opt/yari/onboarding/apps
 if [[ ! -f /etc/yari/onboarding.env ]]; then
   cat >/etc/yari/onboarding.env <<'ENV'
 # Optional production hardening. When set, all mutating portal API calls
-# require X-YARI-Token or Authorization: Bearer with this value.
-# YARI_PORTAL_API_TOKEN=change-me-per-device
+# require X-YARI-Token or Authorization: Bearer with this value. Use auto
+# to generate a persistent per-device token under /var/lib/yari/onboarding.
+# YARI_PORTAL_API_TOKEN=auto
 
 # Setup AP security. Use empty/open for development only. Use auto for
 # a persistent generated per-device password stored under /var/lib/yari/onboarding.
