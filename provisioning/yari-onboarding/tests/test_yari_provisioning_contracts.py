@@ -105,6 +105,19 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("build-yari-portal", installer_text)
         self.assertIn("/usr/local/bin/build-yari-portal", installer_text)
 
+
+    def test_ros_launch_and_bridge_run_as_onboarding_user_and_expose_logs(self):
+        text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        self.assertIn("def user_shell_command", text)
+        self.assertIn('return ["runuser", "-u", user, "--", "bash", "-lc", inner]', text)
+        self.assertIn("export HOME=", text)
+        self.assertIn("USER=", text)
+        self.assertIn("subprocess.Popen(user_shell_command(shell_cmd)", text)
+        self.assertIn('if source == "ros-launch":', text)
+        self.assertIn("tail_file_log(source, ROS_LAUNCH_LOG_FILE, lines)", text)
+        self.assertIn('if source == "atlas-bridge":', text)
+        self.assertIn("tail_file_log(source, ATLAS_BRIDGE_LOG_FILE, lines)", text)
+
     def test_tortoisebot_portal_endpoints_are_wired_to_http_handler(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn('if path == "/api/tortoisebot/status":', text)

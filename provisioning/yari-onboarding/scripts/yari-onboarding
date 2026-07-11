@@ -2534,6 +2534,15 @@ def ros_launch_status():
     return state
 
 
+def user_shell_command(shell_cmd, user=ONBOARDING_USER):
+    home = f"/home/{user}"
+    inner = f"export HOME={sh_quote(home)} USER={sh_quote(user)} LOGNAME={sh_quote(user)}; {shell_cmd}"
+    if os.geteuid() == 0:
+        return ["runuser", "-u", user, "--", "bash", "-lc", inner]
+    return ["bash", "-lc", inner]
+
+
+
 def start_ros_launch_profile(payload):
     status = ros_launch_status()
     if status.get("active"):
@@ -2545,16 +2554,16 @@ def start_ros_launch_profile(payload):
     command = str(profile.get("command") or "").strip()
     if not command:
         return {"ok": False, "profile": profile, "error": "profile command is not configured"}
-    cwd = Path(str(profile.get("cwd") or "/home/tortoisebot"))
+    cwd = Path(str(profile.get("cwd") or f"/home/{ONBOARDING_USER}"))
     if not cwd.is_absolute():
         raise ValueError("profile cwd must be an absolute path")
     setup = str(profile.get("setup") or "/opt/ros/humble/setup.bash")
     ROS_LAUNCH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    shell_cmd = f"source {sh_quote(setup)} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
+    shell_cmd = f"source /opt/ros/humble/setup.bash 2>/dev/null || true; source {sh_quote(setup)} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
     log_handle = ROS_LAUNCH_LOG_FILE.open("ab")
-    proc = subprocess.Popen(["bash", "-lc", shell_cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    proc = subprocess.Popen(user_shell_command(shell_cmd), stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
     ROS_LAUNCH_PID_FILE.write_text(str(proc.pid) + "\n")
-    state = {"active": True, "pid": proc.pid, "profile": profile_name, "command": command, "cwd": str(cwd), "started": int(time.time())}
+    state = {"active": True, "pid": proc.pid, "profile": profile_name, "command": command, "cwd": str(cwd), "user": ONBOARDING_USER, "started": int(time.time())}
     ROS_LAUNCH_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     ROS_LAUNCH_STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
     os.chmod(ROS_LAUNCH_STATE_FILE, 0o600)
@@ -2704,7 +2713,7 @@ def start_atlas_bridge(payload):
     ])
     shell_cmd = f"source /opt/ros/humble/setup.bash 2>/dev/null || true; source {sh_quote(str(setup))} 2>/dev/null || true; cd {sh_quote(str(cwd))} && exec {command}"
     log_handle = ATLAS_BRIDGE_LOG_FILE.open("ab")
-    proc = subprocess.Popen(["bash", "-lc", shell_cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
+    proc = subprocess.Popen(user_shell_command(shell_cmd), stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
     ATLAS_BRIDGE_PID_FILE.write_text(str(proc.pid) + "\n")
     state = {
         "active": True,
@@ -3408,6 +3417,15 @@ def security_status():
     }
 
 
+def tail_file_log(source, path, lines):
+    path = Path(path)
+    if not path.exists():
+        return {"ok": False, "source": source, "logs": "", "path": str(path), "error": "log file not found"}
+    result = command_output(["tail", "-n", str(lines), str(path)], timeout=4)
+    return {"ok": result["ok"], "source": source, "logs": result["stdout"], "path": str(path), "error": result["stderr"]}
+
+
+
 def read_log_source(source, lines=160):
     lines = max(1, min(int(lines), 1000))
     if source == "system":
@@ -3417,6 +3435,10 @@ def read_log_source(source, lines=160):
         return service_logs("yari-onboarding", lines)
     if source == "mavlink":
         return service_logs("yari-mavlink-router", lines)
+    if source == "ros-launch":
+        return tail_file_log(source, ROS_LAUNCH_LOG_FILE, lines)
+    if source == "atlas-bridge":
+        return tail_file_log(source, ATLAS_BRIDGE_LOG_FILE, lines)
     if source == "ros":
         paths = glob_paths(["/home/*/.ros/log/latest/*", "/home/*/.ros/log/*/*.log"])[:20]
         chunks = []
