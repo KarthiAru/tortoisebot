@@ -365,8 +365,9 @@ def save_pairing_tokens(atlas_token="", foxglove_token=""):
 
 def default_device_profile():
     return {
+        "profile_preset": "tortoisebot_rover",
         "vehicle_class": "ground_rover",
-        "autopilot_stack": "none",
+        "autopilot_stack": "ros_only",
         "compute_target": "raspberry_pi",
         "ros_domain_id": 0,
         "notes": "",
@@ -376,6 +377,8 @@ def default_device_profile():
 def read_device_profile():
     config = read_json_file(PORTAL_CONFIG_FILE, {})
     profile = {**default_device_profile(), **config.get("device_profile", {})}
+    if profile.get("profile_preset") not in {"tortoisebot_rover", "ros_ground_robot", "px4_companion", "ardupilot_companion", "generic_edge", "custom"}:
+        profile["profile_preset"] = "custom"
     if profile.get("vehicle_class") not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
         profile["vehicle_class"] = "generic_edge"
     if profile.get("autopilot_stack") not in {"none", "px4", "ardupilot", "ros_only", "custom"}:
@@ -392,9 +395,12 @@ def read_device_profile():
 
 
 def normalize_device_profile(payload):
+    profile_preset = str(payload.get("profile_preset") or "custom").strip().lower()
     vehicle_class = str(payload.get("vehicle_class") or "ground_rover").strip().lower()
     autopilot_stack = str(payload.get("autopilot_stack") or "none").strip().lower()
     compute_target = str(payload.get("compute_target") or "raspberry_pi").strip().lower()
+    if profile_preset not in {"tortoisebot_rover", "ros_ground_robot", "px4_companion", "ardupilot_companion", "generic_edge", "custom"}:
+        raise ValueError("profile_preset must be one of tortoisebot_rover, ros_ground_robot, px4_companion, ardupilot_companion, generic_edge, custom")
     if vehicle_class not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
         raise ValueError("vehicle_class must be one of ground_rover, multirotor, fixed_wing, vtol, boat, sub, generic_edge")
     if autopilot_stack not in {"none", "px4", "ardupilot", "ros_only", "custom"}:
@@ -405,6 +411,7 @@ def normalize_device_profile(payload):
     if ros_domain_id < 0 or ros_domain_id > 232:
         raise ValueError("ros_domain_id must be between 0 and 232")
     return {
+        "profile_preset": profile_preset,
         "vehicle_class": vehicle_class,
         "autopilot_stack": autopilot_stack,
         "compute_target": compute_target,
@@ -888,7 +895,7 @@ def save_setup_config(payload):
     config = read_json_file(PORTAL_CONFIG_FILE, {})
     config.update({"hostname": hostname, "updated": int(time.time())})
     profile_payload = payload.get("device_profile") if isinstance(payload.get("device_profile"), dict) else payload
-    profile_keys = {"vehicle_class", "autopilot_stack", "compute_target", "ros_domain_id", "notes"}
+    profile_keys = {"profile_preset", "vehicle_class", "autopilot_stack", "compute_target", "ros_domain_id", "notes"}
     if any(key in profile_payload for key in profile_keys):
         config["device_profile"] = normalize_device_profile(profile_payload)
     if payload.get("atlas_url"):
