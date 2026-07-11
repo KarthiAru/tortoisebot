@@ -51,6 +51,14 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("portal_gzip_assets=", text)
         self.assertIn("precompressed assets missing", text)
         self.assertLess(text.index("validate_portal_dist"), text.index("cp -a \"${PORTAL_DIST}/.\" /opt/yari/onboarding/web/"))
+    def test_onboarding_installer_refreshes_nodesource_keyring_before_node_install(self):
+        text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("rm -f /etc/apt/sources.list.d/nodesource.list", text)
+        self.assertIn("rm -f /etc/apt/keyrings/nodesource.gpg", text)
+        self.assertIn("gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg", text)
+        self.assertIn("chmod 0644 /etc/apt/keyrings/nodesource.gpg", text)
+        self.assertLess(text.index("rm -f /etc/apt/sources.list.d/nodesource.list"), text.index("apt-get install -y ca-certificates curl gnupg"))
+        self.assertLess(text.index("gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg"), text.index("apt-get install -y nodejs"))
 
     def test_portal_build_helper_is_reproducible_and_metadata_checked(self):
         text = PORTAL_BUILD_HELPER.read_text(encoding="utf-8")

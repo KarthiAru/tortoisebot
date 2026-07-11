@@ -63,6 +63,8 @@
   let networkPolicyForm = { fallback_ap_enabled: true, fallback_timeout_sec: 45, maintenance_ap_enabled: false, serve_portal_on_client_network: true };
   let otaForm = { path: '', confirm: false };
   let otaConfigForm = { release_channel: 'stable', auto_check: true, auto_download: false, auto_install: false, require_signed_artifacts: true, atlas_assignment_url: '' };
+  let configImportFile: File | null = null;
+  let configImportPreview: AnyRecord = { message: 'Select a redacted YARI config export to validate.' };
   let appManifestText = JSON.stringify({
     schema_version: '1',
     id: 'camera-streamer',
@@ -938,13 +940,12 @@
     logOutput = result.logs || pretty(result);
   }
 
-  function filenameFromDisposition(disposition: string | null) {
+  function filenameFromDisposition(disposition: string | null, fallback = 'yari-support-bundle.tar.gz') {
     const match = disposition?.match(/filename="?([^";]+)"?/i);
-    return match?.[1] || 'yari-support-bundle.tar.gz';
+    return match?.[1] || fallback;
   }
 
-  async function downloadSupportBundle() {
-    const endpoint = logsStatus?.support_bundle_endpoint || '/api/logs/support-bundle';
+  async function downloadBlob(endpoint: string, fallbackName: string, messagePrefix: string) {
     const response = await fetch(endpoint, { headers: authHeaders() });
     if (!response.ok) {
       const errorText = await response.text();
@@ -952,15 +953,44 @@
       return;
     }
     const blob = await response.blob();
+    const filename = filenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = filenameFromDisposition(response.headers.get('content-disposition'));
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setAction({ ok: true, message: `Downloaded ${link.download}` });
+    setAction({ ok: true, message: `${messagePrefix} ${filename}` });
+  }
+
+  async function downloadSupportBundle() {
+    const endpoint = logsStatus?.support_bundle_endpoint || '/api/logs/support-bundle';
+    await downloadBlob(endpoint, 'yari-support-bundle.tar.gz', 'Downloaded');
+  }
+
+  async function downloadConfigExport() {
+    await downloadBlob('/api/config/export', 'yari-config-export.json', 'Downloaded');
+  }
+
+  function selectConfigImportFile(event: Event) {
+    const input = event.target as HTMLInputElement;
+    configImportFile = input.files?.[0] || null;
+  }
+
+  async function validateConfigImport() {
+    if (!configImportFile) {
+      configImportPreview = { ok: false, error: 'Choose a YARI config export JSON file first.' };
+      return;
+    }
+    try {
+      const text = await configImportFile.text();
+      const parsed = JSON.parse(text);
+      configImportPreview = await post('/api/config/import/validate', { export: parsed });
+    } catch (err) {
+      configImportPreview = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   async function reboot() {
@@ -1600,13 +1630,48 @@
 
       <div class="card wide">
         <h2>Device Actions</h2>
+        <p>Export config downloads a redacted JSON snapshot for migration or support. Re-enter Wi-Fi passwords, SSH secrets, Atlas tokens, Foxglove tokens, and app secrets on restore.</p>
         <div class="row">
           <button class="secondary" on:click={reboot}>Reboot</button>
           <button class="secondary" on:click={regenerateDeviceId}>Regenerate device ID</button>
+          <button class="secondary" on:click={downloadConfigExport}>Export config</button>
           <button class="danger" on:click={factoryResetNetwork}>Factory reset network</button>
           <button class="danger" on:click={factoryResetNetworkAndReboot}>Reset Wi-Fi and reboot to setup</button>
           <button class="danger" on:click={shutdown}>Shutdown</button>
         </div>
+      </div>
+
+      <div class="card wide">
+        <h2>Config Import Dry Run</h2>
+        <p>Validate a redacted YARI config export before migration. This does not apply settings or restore secrets.</p>
+        <div class="row">
+          <input accept="application/json,.json" type="file" on:change={selectConfigImportFile} />
+          <button class="secondary" on:click={validateConfigImport}>Validate export</button>
+        </div>
+        {#if configImportPreview?.summary}
+          <div class="summary-grid compact">
+            <div><small>Sections</small><strong>{configImportPreview.summary.section_count}</strong></div>
+            <div><small>Restorable now</small><strong>{configImportPreview.summary.restorable_now}</strong></div>
+            <div><small>Future only</small><strong>{configImportPreview.summary.future_only}</strong></div>
+            <div><small>Secrets needed</small><strong>{configImportPreview.summary.missing_secret_count}</strong></div>
+          </div>
+        {/if}
+        {#if configImportPreview?.restore_plan?.length}
+          <table>
+            <thead><tr><th>Section</th><th>Status</th><th>Endpoint</th><th>Note</th></tr></thead>
+            <tbody>
+              {#each configImportPreview.restore_plan as item}
+                <tr>
+                  <td>{item.name}<br /><small>{item.source}</small></td>
+                  <td><span class={`pill ${item.restore_supported ? 'ok' : 'warn'}`}>{item.restore_supported ? 'Ready' : 'Future'}</span></td>
+                  <td><code>{item.apply_endpoint}</code></td>
+                  <td>{item.note}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        <pre>{pretty(configImportPreview)}</pre>
       </div>
 
       <div class="card wide">

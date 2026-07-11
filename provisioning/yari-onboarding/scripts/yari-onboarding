@@ -3142,6 +3142,113 @@ def support_app_manifest_snapshots():
     return manifests
 
 
+def config_export():
+    config_snapshots = support_config_snapshots()
+    app_snapshots = support_app_manifest_snapshots()
+    return sanitize_support_payload({
+        "schema_version": "1",
+        "kind": "yari-device-config-export",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "device_id": device_id(),
+        "hostname": socket.gethostname(),
+        "redaction": logs_status()["support_bundle"]["redaction"],
+        "portal": portal_version(),
+        "device": {
+            "model": device_model(),
+            "profile": read_device_profile(),
+            "ip_addresses": device_status().get("ip_addresses", []),
+        },
+        "network": {
+            "status": network_status(),
+            "diagnostics": network_diagnostics(),
+        },
+        "config": config_snapshots,
+        "apps": app_snapshots,
+        "paths": {
+            "device_config_dir": str(DEVICE_CONFIG_DIR),
+            "state_dir": str(STATE_DIR),
+            "app_manifest_dir": str(APP_MANIFEST_DIR),
+            "app_package_dir": str(APP_PACKAGE_DIR),
+        },
+        "restore_note": "This export is intentionally redacted. Re-enter Wi-Fi passwords, SSH private material, Atlas tokens, Foxglove tokens, and app secrets on restore.",
+    })
+
+
+def validate_config_import(payload):
+    candidate = payload.get("export") if isinstance(payload.get("export"), dict) else payload
+    if not isinstance(candidate, dict):
+        raise ValueError("config export payload must be a JSON object")
+    if candidate.get("kind") != "yari-device-config-export":
+        raise ValueError("config export kind must be yari-device-config-export")
+    if str(candidate.get("schema_version") or "") != "1":
+        raise ValueError("unsupported config export schema_version")
+
+    config = candidate.get("config") if isinstance(candidate.get("config"), dict) else {}
+    apps = candidate.get("apps") if isinstance(candidate.get("apps"), dict) else {}
+    device = candidate.get("device") if isinstance(candidate.get("device"), dict) else {}
+    profile = device.get("profile") if isinstance(device.get("profile"), dict) else {}
+    redaction_text = str(candidate.get("redaction") or "")
+    missing_secrets = []
+    if "device-portal-config.json" in config:
+        missing_secrets.extend(["Wi-Fi password", "Atlas token", "Foxglove token", "SSH password/private material"])
+    if apps:
+        missing_secrets.append("App secrets and environment tokens")
+    sections = []
+
+    def add_section(name, source, items, endpoint, supported, note):
+        sections.append({
+            "name": name,
+            "source": source,
+            "items": sorted(items),
+            "apply_endpoint": endpoint,
+            "restore_supported": supported,
+            "note": note,
+        })
+
+    if profile:
+        add_section("device_profile", "device.profile", profile.keys(), "/api/device/profile", True, "Can be applied after operator review.")
+    if "network-policy.json" in config:
+        add_section("network_policy", "config/network-policy.json", config["network-policy.json"].keys(), "/api/network/policy", True, "Does not include Wi-Fi credentials.")
+    if "static-network.json" in config:
+        add_section("static_network", "config/static-network.json", config["static-network.json"].keys(), "/api/network/static-ip", True, "Apply only after confirming address/gateway for the new network.")
+    if "mavlink-endpoints.json" in config:
+        add_section("mavlink_endpoints", "config/mavlink-endpoints.json", config["mavlink-endpoints.json"].keys(), "/api/mavlink/endpoints", True, "Serial device names may differ on the new hardware.")
+    if "ota-config.json" in config:
+        add_section("ota_policy", "config/ota-config.json", config["ota-config.json"].keys(), "/api/ota/config", True, "Atlas assignment URLs and credentials must be verified separately.")
+    if apps:
+        add_section("app_manifests", "apps/*.json", apps.keys(), "/api/apps/install", False, "Future restore flow should validate and apply each app manifest explicitly.")
+    warnings = [
+        "Validation is dry-run only; no configuration was changed.",
+        "Secrets are intentionally redacted and must be re-entered during restore.",
+    ]
+    if not redaction_text:
+        warnings.append("Export redaction metadata is missing; inspect the file before restore.")
+    supported_sections = [section for section in sections if section["restore_supported"]]
+    future_sections = [section for section in sections if not section["restore_supported"]]
+    return {
+        "ok": True,
+        "dry_run": True,
+        "schema_version": candidate.get("schema_version"),
+        "source_device_id": candidate.get("device_id", "unknown"),
+        "source_hostname": candidate.get("hostname", "unknown"),
+        "generated_at": candidate.get("generated_at", "unknown"),
+        "redacted": bool(redaction_text),
+        "sections": sections,
+        "restore_plan": sections,
+        "summary": {
+            "section_count": len(sections),
+            "restorable_now": len(supported_sections),
+            "future_only": len(future_sections),
+            "missing_secret_count": len(missing_secrets),
+        },
+        "apps": sorted(apps.keys()),
+        "missing_secrets": missing_secrets,
+        "warnings": warnings,
+        "restore_supported": False,
+        "restore_note": candidate.get("restore_note") or "Automatic restore is not enabled yet.",
+    }
+
+
 def support_bundle_manifest(bundle_path, payloads, config_snapshots, app_snapshots, log_sources_list):
     return sanitize_support_payload({
         "schema_version": "1",
@@ -3348,6 +3455,19 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/config/export":
+                if not request_authorized(self.headers):
+                    self.send_json(401, {"ok": False, "error": "YARI portal API token required"})
+                    return
+                payload = json.dumps(config_export(), indent=2).encode("utf-8") + b"\n"
+                filename = f"yari-config-{device_id()}-{int(time.time())}.json"
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-disposition", f"attachment; filename={filename}")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
             logs_match = re.match(r"^/api/logs/([^/]+)$", path)
             if logs_match:
                 lines = query.get("lines", ["160"])[0]
@@ -3415,6 +3535,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "message": "Wi-Fi saved. Device will reboot." if REBOOT_AFTER_SAVE else "Wi-Fi saved."})
                 if REBOOT_AFTER_SAVE:
                     reboot_soon()
+                return
+            if path == "/api/config/import/validate":
+                self.send_json(200, validate_config_import(payload))
                 return
             if path == "/api/setup/config":
                 result = save_setup_config(payload)

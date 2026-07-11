@@ -40,11 +40,19 @@ install_node20_build_tools() {
 
   echo "Installing Node.js 20 for Svelte portal build"
   export DEBIAN_FRONTEND=noninteractive
+
+  # A stale NodeSource entry with a missing/rotated key makes apt-get update
+  # fail before we can install curl/gnupg. Disable it, install prerequisites
+  # from Ubuntu, then recreate the NodeSource source with a fresh keyring.
+  rm -f /etc/apt/sources.list.d/nodesource.list
+  rm -f /etc/apt/keyrings/nodesource.gpg
+
   apt-get update
   apt-get install -y ca-certificates curl gnupg
   install -d -m 0755 /etc/apt/keyrings
   curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-    -o /etc/apt/keyrings/nodesource.gpg
+    | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+  chmod 0644 /etc/apt/keyrings/nodesource.gpg
   echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
     >/etc/apt/sources.list.d/nodesource.list
   apt-get update

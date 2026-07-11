@@ -138,6 +138,75 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(version["assets"]["optimization_state"], "optimized")
         self.assertEqual(version["assets"]["optimization_message"], "1 compressed assets, 80.0% saved")
 
+    def test_config_export_redacts_secrets_and_includes_portable_state(self):
+        self.module.PORTAL_CONFIG_FILE.write_text(json.dumps({
+            "device_profile": {"vehicle_class": "ground_rover"},
+            "atlas_url": "https://atlas.example/api/v1",
+        }))
+        self.module.PORTAL_SECRETS_FILE.write_text(json.dumps({
+            "wifi_password": "super-secret-wifi",
+            "atlas_token": "atlas-secret-token",
+        }))
+        self.module.VIDEO_CONFIG_FILE.write_text(json.dumps({"foxglove_token": "foxglove-secret"}))
+        self.module.APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_MANIFEST_DIR / "test-app.json").write_text(json.dumps({
+            "schema_version": "1",
+            "id": "test-app",
+            "name": "Test App",
+            "version": "1.0.0",
+            "runtime": "container",
+            "services": ["yari-ros"],
+            "permissions": ["network.client"],
+            "container": {"image": "registry.example/test-app:1.0.0", "environment": {"API_TOKEN": "app-token-secret"}},
+        }))
+
+        export = self.module.config_export()
+        encoded = json.dumps(export)
+
+        self.assertEqual(export["kind"], "yari-device-config-export")
+        self.assertIn("restore_note", export)
+        self.assertEqual(export["config"]["device-portal-config.json"]["device_profile"]["vehicle_class"], "ground_rover")
+        self.assertIn("test-app.json", export["apps"])
+        self.assertNotIn("super-secret-wifi", encoded)
+        self.assertNotIn("atlas-secret-token", encoded)
+        self.assertNotIn("foxglove-secret", encoded)
+        self.assertNotIn("app-token-secret", encoded)
+        self.assertTrue(export["apps"]["test-app.json"]["container"]["environment"]["API_TOKEN"]["configured"])
+
+    def test_config_import_validation_is_dry_run_and_reports_restore_gaps(self):
+        export = {
+            "schema_version": "1",
+            "kind": "yari-device-config-export",
+            "device_id": "device-a",
+            "hostname": "yari-a",
+            "generated_at": "2026-07-11T00:00:00Z",
+            "redaction": "secrets redacted",
+            "device": {"profile": {"vehicle_class": "ground_rover", "compute_target": "raspberry_pi"}},
+            "config": {"network-policy.json": {"fallback_ap_enabled": True}},
+            "apps": {"camera-streamer.json": {"id": "camera-streamer"}},
+            "restore_note": "redacted",
+        }
+
+        result = self.module.validate_config_import({"export": export})
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(result["restore_supported"])
+        self.assertEqual(result["source_device_id"], "device-a")
+        self.assertIn("camera-streamer.json", result["apps"])
+        self.assertIn("App secrets and environment tokens", result["missing_secrets"])
+        self.assertIn("device_profile", [section["name"] for section in result["sections"]])
+        self.assertEqual(result["summary"]["section_count"], 3)
+        self.assertEqual(result["summary"]["restorable_now"], 2)
+        self.assertEqual(result["summary"]["future_only"], 1)
+        app_plan = next(section for section in result["restore_plan"] if section["name"] == "app_manifests")
+        self.assertFalse(app_plan["restore_supported"])
+        self.assertEqual(app_plan["apply_endpoint"], "/api/apps/install")
+
+    def test_config_import_validation_rejects_wrong_kind(self):
+        with self.assertRaises(ValueError):
+            self.module.validate_config_import({"schema_version": "1", "kind": "not-yari"})
+
     def test_static_portal_serves_precompressed_assets_when_browser_accepts_gzip(self):
         body = b"console.log('yari-os');\n"
         asset = self.module.WEB_DIR / "assets" / "app.js"
