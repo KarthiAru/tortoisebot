@@ -696,7 +696,8 @@ def video_status():
 def default_ros_launch_profiles():
     return {
         "profiles": [
-            {"name": "tortoisebot-hardware", "label": "TortoiseBot hardware bringup", "command_configured": True, "enabled": True},
+            {"name": "tortoisebot-atlas-minimal", "label": "Minimal hardware + Atlas remote", "command_configured": True, "enabled": True},
+            {"name": "tortoisebot-foxglove-minimal", "label": "Minimal hardware + Foxglove remote", "command_configured": True, "enabled": True},
             {"name": "drone-companion", "label": "PX4/ArduPilot drone companion", "command_configured": False, "enabled": False},
             {"name": "rover-companion", "label": "PX4/ArduPilot rover companion", "command_configured": False, "enabled": False},
         ]
@@ -704,13 +705,20 @@ def default_ros_launch_profiles():
 
 
 def ros_launch_profiles():
-    payload = read_json(ROS_LAUNCH_CONFIG_FILE, default_ros_launch_profiles())
-    profiles = payload.get("profiles", []) if isinstance(payload, dict) else []
+    payload = read_json(ROS_LAUNCH_CONFIG_FILE, {})
+    profile_by_name = {}
+    for source in (default_ros_launch_profiles(), payload if isinstance(payload, dict) else {}):
+        for profile in source.get("profiles", []):
+            if not isinstance(profile, dict):
+                continue
+            name = str(profile.get("name") or "").strip()
+            if not name:
+                continue
+            item = dict(profile)
+            item["name"] = name
+            profile_by_name[name] = {**profile_by_name.get(name, {}), **item}
     normalized = []
-    for profile in profiles:
-        if not isinstance(profile, dict):
-            continue
-        item = dict(profile)
+    for item in profile_by_name.values():
         item["command_configured"] = bool(str(item.get("command") or "").strip()) if "command" in item else bool(item.get("command_configured"))
         item["enabled"] = bool(item.get("enabled", True))
         normalized.append(item)

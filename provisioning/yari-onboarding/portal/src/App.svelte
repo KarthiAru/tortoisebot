@@ -535,6 +535,12 @@
     return ros?.launch_profiles || [];
   }
 
+  function tortoisebotRemoteProfiles() {
+    const preferred = ['tortoisebot-atlas-minimal', 'tortoisebot-foxglove-minimal'];
+    const profiles = rosLaunchProfiles().filter((profile: AnyRecord) => preferred.includes(profile.name));
+    return profiles.sort((first: AnyRecord, second: AnyRecord) => preferred.indexOf(first.name) - preferred.indexOf(second.name));
+  }
+
   function rosItems() {
     const nodes = ros?.nodes || [];
     const topics = rosTopicItems();
@@ -1270,9 +1276,8 @@
     });
   }
 
-  async function startTortoisebotHardware() {
-    const profile = rosLaunchProfiles().find((item: AnyRecord) => item.name === 'tortoisebot-hardware');
-    selectedRosProfile = profile?.name || selectedRosProfile || 'tortoisebot-hardware';
+  async function startTortoisebotProfile(profileName: string) {
+    selectedRosProfile = profileName;
     await startRosProfile();
   }
 
@@ -2113,16 +2118,33 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card wide">
         <h2>Robot Runtime</h2>
         <div class="summary-grid">
           <div><small>Launch</small><strong>{tortoisebot?.ros_launch?.active ? 'running' : 'stopped'}</strong></div>
           <div><small>PID</small><strong>{tortoisebot?.ros_launch?.pid || 'none'}</strong></div>
-          <div><small>Profile</small><strong>{tortoisebot?.ros_launch?.profile || 'tortoisebot-hardware'}</strong></div>
+          <div><small>Profile</small><strong>{tortoisebot?.ros_launch?.profile || 'none'}</strong></div>
         </div>
+        {#if tortoisebotRemoteProfiles().length > 0}
+          <div class="app-grid compact-grid">
+            {#each tortoisebotRemoteProfiles() as profile}
+              <article class="app-card">
+                <div class="app-card-title">
+                  <div><strong>{profile.label || profile.name}</strong><br /><small>{profile.name}</small></div>
+                  <span class={`pill ${profile.enabled === false ? 'warn' : 'ok'}`}>{profile.enabled === false ? 'disabled' : 'enabled'}</span>
+                </div>
+                <p>{profile.message || profile.command}</p>
+                <div class="row">
+                  <button class:busy={isBusy('start-ros-profile')} on:click={() => startTortoisebotProfile(profile.name)} disabled={profile.enabled === false || Boolean(busyAction)}>{buttonText('start-ros-profile', 'Start', 'Starting...')}</button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {:else}
+          <div class="empty-state">No TortoiseBot minimal remote profiles available. Pull and install the latest onboarding package.</div>
+        {/if}
         <div class="row">
-          <button class:busy={isBusy('start-ros-profile')} on:click={startTortoisebotHardware} disabled={Boolean(busyAction)}>{buttonText('start-ros-profile', 'Start hardware bringup', 'Starting...')}</button>
-          <button class:busy={isBusy('stop-ros-profile')} class="secondary" on:click={stopRosProfile} disabled={Boolean(busyAction)}>{buttonText('stop-ros-profile', 'Stop bringup', 'Stopping...')}</button>
+          <button class:busy={isBusy('stop-ros-profile')} class="secondary" on:click={stopRosProfile} disabled={Boolean(busyAction)}>{buttonText('stop-ros-profile', 'Stop active bringup', 'Stopping...')}</button>
         </div>
       </div>
 
