@@ -50,7 +50,23 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("${PORTAL_DIST}/portal-assets.json", text)
         self.assertIn("portal_gzip_assets=", text)
         self.assertIn("precompressed assets missing", text)
-        self.assertLess(text.index("validate_portal_dist"), text.index("cp -a \"${PORTAL_DIST}/.\" /opt/yari/onboarding/web/"))
+        ensure_call = text.rindex("ensure_portal_dist")
+        validate_call = text.rindex("if ! validate_portal_dist")
+        copy_call = text.index("cp -a \"${PORTAL_DIST}/.\" /opt/yari/onboarding/web/")
+        self.assertLess(ensure_call, validate_call)
+        self.assertLess(validate_call, copy_call)
+
+    def test_onboarding_installer_rebuilds_stale_svelte_dist_after_git_pull(self):
+        text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
+        self.assertIn("portal_dist_stale", text)
+        self.assertIn("YARI_PORTAL_FORCE_BUILD", text)
+        self.assertIn("${PORTAL_SRC}/src", text)
+        self.assertIn("${PORTAL_SRC}/package-lock.json", text)
+        self.assertIn("-newer \"${PORTAL_DIST}/portal-version.json\"", text)
+        self.assertIn("Building Svelte YARI OS portal", text)
+        self.assertLess(text.index("portal_dist_stale"), text.index("ensure_portal_dist"))
+        self.assertLess(text.index("find \"${source_paths[@]}\""), text.rindex("return 1"))
+
     def test_onboarding_installer_refreshes_nodesource_keyring_before_node_install(self):
         text = ONBOARDING_INSTALLER.read_text(encoding="utf-8")
         self.assertIn("rm -f /etc/apt/sources.list.d/nodesource.list", text)

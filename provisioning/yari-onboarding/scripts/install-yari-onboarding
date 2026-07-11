@@ -80,15 +80,48 @@ validate_portal_dist() {
   fi
 }
 
-if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
+portal_dist_stale() {
+  [[ "${YARI_PORTAL_FORCE_BUILD:-0}" == "1" ]] && return 0
+  [[ ! -f "${PORTAL_DIST}/index.html" ]] && return 0
+  [[ ! -f "${PORTAL_DIST}/portal-version.json" ]] && return 0
+  [[ ! -f "${PORTAL_DIST}/portal-assets.json" ]] && return 0
+
+  local source_paths=()
+  local candidate
+  for candidate in \
+    "${PORTAL_SRC}/src" \
+    "${PORTAL_SRC}/scripts" \
+    "${PORTAL_SRC}/index.html" \
+    "${PORTAL_SRC}/package.json" \
+    "${PORTAL_SRC}/package-lock.json" \
+    "${PORTAL_SRC}/svelte.config.js" \
+    "${PORTAL_SRC}/tsconfig.json" \
+    "${PORTAL_SRC}/vite.config.ts"; do
+    [[ -e "${candidate}" ]] && source_paths+=("${candidate}")
+  done
+
+  if (( ${#source_paths[@]} > 0 )) && find "${source_paths[@]}" -type f -newer "${PORTAL_DIST}/portal-version.json" -print -quit | grep -q .; then
+    return 0
+  fi
+
+  return 1
+}
+
+ensure_portal_dist() {
+  if ! portal_dist_stale; then
+    return 0
+  fi
+
   if ! install_node20_build_tools; then
-    echo "Svelte portal build is missing and Node.js >= 18/npm are not available." >&2
+    echo "Svelte portal build is missing or stale and Node.js >= 18/npm are not available." >&2
     echo "Install Node.js 20, or build provisioning/yari-onboarding/portal/dist before running this installer." >&2
     exit 1
   fi
   echo "Building Svelte YARI OS portal from ${PORTAL_SRC}"
   "${SRC_ROOT}/scripts/build-yari-portal"
-fi
+}
+
+ensure_portal_dist
 
 if ! validate_portal_dist; then
   exit 1
