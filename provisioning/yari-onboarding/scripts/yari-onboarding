@@ -550,6 +550,14 @@ def request_authorized(headers):
     return bool(supplied) and secrets.compare_digest(supplied, expected)
 
 
+def support_bundle_authorized(headers):
+    return request_authorized(headers)
+
+
+def sensitive_media_authorized(headers):
+    return request_authorized(headers)
+
+
 def command_output(args, timeout=8):
     try:
         result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
@@ -3105,6 +3113,22 @@ def support_app_manifest_snapshots():
     return manifests
 
 
+def support_bundle_manifest(bundle_path, payloads, config_snapshots, app_snapshots, log_sources_list):
+    return sanitize_support_payload({
+        "schema_version": "1",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "device_id": device_id(),
+        "filename": bundle_path.name,
+        "format": "tar.gz",
+        "redaction": logs_status()["support_bundle"]["redaction"],
+        "status_snapshots": sorted(payloads.keys()),
+        "config_snapshots": sorted(f"config/{name}" for name in config_snapshots.keys()),
+        "app_manifests": sorted(f"apps/{name}" for name in app_snapshots.keys()),
+        "logs": sorted(f"logs/{source}.log" for source in log_sources_list),
+        "portal": portal_version(),
+    })
+
+
 def support_bundle():
     SUPPORT_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
     bundle = SUPPORT_BUNDLE_DIR / f"yari-support-{device_id()}-{int(time.time())}.tar.gz"
@@ -3123,7 +3147,15 @@ def support_bundle():
         "logs-status.json": logs_status(),
         "portal-version.json": portal_version(),
     }
+    config_snapshots = support_config_snapshots()
+    app_snapshots = support_app_manifest_snapshots()
+    log_sources_list = ("onboarding", "system", "ros", "mavlink")
+    manifest = support_bundle_manifest(bundle, payloads, config_snapshots, app_snapshots, log_sources_list)
     with tarfile.open(bundle, "w:gz") as tar:
+        tmp = SUPPORT_BUNDLE_DIR / "manifest.json"
+        tmp.write_text(json.dumps(manifest, indent=2) + "\n")
+        tar.add(tmp, arcname="manifest.json")
+        tmp.unlink(missing_ok=True)
         for name, payload in payloads.items():
             tmp = SUPPORT_BUNDLE_DIR / name
             tmp.write_text(json.dumps(sanitize_support_payload(payload), indent=2) + "\n")
@@ -3131,17 +3163,17 @@ def support_bundle():
             tmp.unlink(missing_ok=True)
         if PORTAL_ASSETS_FILE.exists():
             tar.add(PORTAL_ASSETS_FILE, arcname="portal-assets.json")
-        for name, payload in support_config_snapshots().items():
+        for name, payload in config_snapshots.items():
             tmp = SUPPORT_BUNDLE_DIR / name
             tmp.write_text(json.dumps(payload, indent=2) + "\n")
             tar.add(tmp, arcname=f"config/{name}")
             tmp.unlink(missing_ok=True)
-        for name, payload in support_app_manifest_snapshots().items():
+        for name, payload in app_snapshots.items():
             tmp = SUPPORT_BUNDLE_DIR / name
             tmp.write_text(json.dumps(payload, indent=2) + "\n")
             tar.add(tmp, arcname=f"apps/{name}")
             tmp.unlink(missing_ok=True)
-        for source in ("onboarding", "system", "ros", "mavlink"):
+        for source in log_sources_list:
             tmp = SUPPORT_BUNDLE_DIR / f"{source}.log"
             tmp.write_text(read_log_source(source, 240).get("logs", "") + "\n")
             tar.add(tmp, arcname=f"logs/{source}.log")
@@ -3157,9 +3189,18 @@ def shutdown_soon():
     threading.Thread(target=delayed, daemon=True).start()
 
 
+def managed_network_reset_paths():
+    return [
+        NM_CONNECTION_DIR / "yari-wifi.nmconnection",
+        NETPLAN_DIR / "01-yari-wifi.yaml",
+        NETPLAN_DIR / "01-tortoisebot-wifi.yaml",
+        NETPLAN_DIR / "99-tortoisebot-wifi.yaml",
+    ]
+
+
 def factory_reset(reboot=False):
     COMPLETE_FILE.unlink(missing_ok=True)
-    for path in (NM_CONNECTION_DIR / "yari-wifi.nmconnection", NETPLAN_DIR / "01-yari-wifi.yaml"):
+    for path in managed_network_reset_paths():
         path.unlink(missing_ok=True)
     if has_command("nmcli"):
         run(["nmcli", "connection", "delete", "yari-wifi"], capture=True)
@@ -3266,6 +3307,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(200, logs_status())
                 return
             if path == "/api/logs/support-bundle":
+                if not support_bundle_authorized(self.headers):
+                    self.send_json(401, {"ok": False, "error": "YARI portal API token required"})
+                    return
                 bundle = support_bundle()
                 body = bundle.read_bytes()
                 self.send_response(200)
@@ -3306,6 +3350,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(200, video_status())
                 return
             if path == "/api/video/snapshot":
+                if not sensitive_media_authorized(self.headers):
+                    self.send_json(401, {"ok": False, "error": "YARI portal API token required"})
+                    return
                 self.send_binary(200, "image/jpeg", capture_video_snapshot())
                 return
             if path == "/api/data/status":

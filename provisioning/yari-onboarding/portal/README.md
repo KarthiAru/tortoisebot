@@ -35,6 +35,8 @@ Install on a device from the repo root:
 sudo provisioning/yari-onboarding/scripts/install-yari-onboarding
 ```
 
+Fresh TortoiseBot installs call this installer automatically after cloning/pulling the repo. The generated `/usr/local/sbin/tortoisebot-install.sh` refreshes the repo and reinstalls the portal before checking the heavy ROS install sentinel, so rerunning it after a pull can update the local UI without forcing dependency reinstall or workspace rebuild. The dependency installer installs Node.js 20 from NodeSource so the portal can be rebuilt on-device when `dist/` is not present in Git. For OS image builds, `build_tortoisebot_image.sh` builds `dist/` on the host and copies the static assets into the image rootfs before first boot.
+
 ## App Runtime UI
 
 The Apps tab is the first operator-facing slice of the YARI OS app model. It shows profile-based recommendations, installed core/service/container apps, local registry manifests, local `.yariapp` packages, health state, declared services, ports, permissions, backend-derived permission risk review, and direct start/stop/restart/log actions. Logs use `journalctl` for service apps and Docker/Podman logs for container apps. Installed app cards can apply a matching local registry update directly when the manifest digest changes. Local package cards expose trust state (`Unsigned`, `Signed metadata`, `Verified`, or `Blocked`) from the backend signature policy so production images can reject unverified packages without hiding why. Manual JSON manifest validation/install remains available for development and support, but normal operators should use the local registry and package cards first.

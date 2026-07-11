@@ -35,6 +35,7 @@ apt-get install -y \
   network-manager \
   avahi-daemon \
   libnss-mdns \
+  nodejs \
   python3-ament-package \
   python3-colcon-common-extensions \
   python3-opencv \

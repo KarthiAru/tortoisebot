@@ -590,11 +590,6 @@ exec > >(tee -a "\${LOG_FILE}") 2>&1
 
 echo "==> TortoiseBot install started at \$(date -Is)"
 
-if [[ -f "\${SENTINEL}" ]]; then
-  echo "==> TortoiseBot install already completed. Remove \${SENTINEL} to force a reinstall."
-  exit 0
-fi
-
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates git
@@ -606,6 +601,16 @@ else
   sudo -u "\${USERNAME}" git -C "\${REPO_DIR}" fetch origin "\${REPO_BRANCH}"
   sudo -u "\${USERNAME}" git -C "\${REPO_DIR}" checkout "\${REPO_BRANCH}"
   sudo -u "\${USERNAME}" git -C "\${REPO_DIR}" pull --ff-only
+fi
+
+if [[ -x "\${REPO_DIR}/provisioning/yari-onboarding/scripts/install-yari-onboarding" ]]; then
+  bash "\${REPO_DIR}/provisioning/yari-onboarding/scripts/install-yari-onboarding"
+fi
+
+if [[ -f "\${SENTINEL}" ]]; then
+  echo "==> TortoiseBot portal/repo refreshed. Heavy ROS install already completed."
+  echo "==> Remove \${SENTINEL} to force dependency reinstall and workspace rebuild."
+  exit 0
 fi
 
 bash "\${REPO_DIR}/provisioning/scripts/install_tortoisebot_humble.sh"

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import './app.css';
   import RecommendationCard from './RecommendationCard.svelte';
   import type { AnyRecord, DeviceStatus, NetworkDiagnostics, NetworkStatus, PortalVersion, ServiceList } from './types';
@@ -77,9 +77,14 @@
     ui: { path: '#video' },
   }, null, 2);
 
-  async function api<T>(path: string, init?: RequestInit): Promise<T> {
-    const headers = new Headers(init?.headers || {});
+  function authHeaders(extra?: HeadersInit) {
+    const headers = new Headers(extra || {});
     if (apiToken.trim()) headers.set('x-yari-token', apiToken.trim());
+    return headers;
+  }
+
+  async function api<T>(path: string, init?: RequestInit): Promise<T> {
+    const headers = authHeaders(init?.headers);
     const response = await fetch(path, { ...init, headers });
     const contentType = response.headers.get('content-type') || '';
     const data = contentType.includes('application/json') ? await response.json() : await response.text();
@@ -906,6 +911,31 @@
     logOutput = result.logs || pretty(result);
   }
 
+  function filenameFromDisposition(disposition: string | null) {
+    const match = disposition?.match(/filename="?([^";]+)"?/i);
+    return match?.[1] || 'yari-support-bundle.tar.gz';
+  }
+
+  async function downloadSupportBundle() {
+    const endpoint = logsStatus?.support_bundle_endpoint || '/api/logs/support-bundle';
+    const response = await fetch(endpoint, { headers: authHeaders() });
+    if (!response.ok) {
+      const errorText = await response.text();
+      setAction({ ok: false, error: errorText || response.statusText });
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filenameFromDisposition(response.headers.get('content-disposition'));
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setAction({ ok: true, message: `Downloaded ${link.download}` });
+  }
+
   async function reboot() {
     if (!confirm('Reboot this device now?')) return;
     setAction(await post('/api/reboot'));
@@ -930,6 +960,12 @@
     if (!confirm('Factory reset saved network configuration?')) return;
     setAction(await post('/api/network/factory-reset', { reboot: false }));
     await refreshNetwork();
+    await refreshDevice();
+  }
+
+  async function factoryResetNetworkAndReboot() {
+    if (!confirm('Clear saved Wi-Fi and reboot into setup AP recovery mode?')) return;
+    setAction(await post('/api/network/factory-reset', { reboot: true }));
   }
 
   async function saveMavlink() {
@@ -963,9 +999,22 @@
     await refreshRos();
   }
 
+  function clearPreviewUrl() {
+    if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    previewUrl = '';
+  }
+
   async function refreshPreview() {
     previewState = 'Refreshing preview...';
-    previewUrl = `/api/video/snapshot?ts=${Date.now()}`;
+    clearPreviewUrl();
+    try {
+      const response = await fetch(`/api/video/snapshot?ts=${Date.now()}`, { headers: authHeaders() });
+      if (!response.ok) throw new Error(await response.text() || response.statusText);
+      previewUrl = URL.createObjectURL(await response.blob());
+      previewState = 'Preview updated.';
+    } catch (err) {
+      previewState = `Preview unavailable. ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 
   async function saveVideoSettings() {
@@ -1071,6 +1120,8 @@
       appOutput = { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+
+  onDestroy(clearPreviewUrl);
 
   onMount(() => {
     const saved = localStorage.getItem('yari-theme');
@@ -1451,7 +1502,7 @@
           </div>
           <div class="row">
             <button class="secondary" on:click={refreshLogs}>Refresh sources</button>
-            <a class="button" href={logsStatus?.support_bundle_endpoint || '/api/logs/support-bundle'}>Download bundle</a>
+            <button type="button" on:click={downloadSupportBundle}>Download bundle</button>
           </div>
         </div>
         <div class="summary-grid">
@@ -1512,6 +1563,7 @@
           <button class="secondary" on:click={reboot}>Reboot</button>
           <button class="secondary" on:click={regenerateDeviceId}>Regenerate device ID</button>
           <button class="danger" on:click={factoryResetNetwork}>Factory reset network</button>
+          <button class="danger" on:click={factoryResetNetworkAndReboot}>Reset Wi-Fi and reboot to setup</button>
           <button class="danger" on:click={shutdown}>Shutdown</button>
         </div>
       </div>
@@ -1786,7 +1838,7 @@
         <h2>Preview</h2>
         <div class="row"><button class="secondary" on:click={refreshPreview}>Refresh preview</button></div>
         {#if previewUrl}
-          <img src={previewUrl} alt="Camera preview" on:load={() => (previewState = 'Preview updated.')} on:error={() => (previewState = 'Preview unavailable. Check camera device and ffmpeg.')} />
+          <img src={previewUrl} alt="Camera preview" />
         {:else}
           <div class="empty-state">No preview loaded yet.</div>
         {/if}

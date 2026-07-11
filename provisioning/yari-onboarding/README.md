@@ -337,7 +337,7 @@ By default, development images keep the local portal API open on the device LAN/
 | `POST /api/network/ap/enable` | Start setup AP mode. |
 | `POST /api/network/static-ip` | Save validated static IPv4 settings and apply them to a NetworkManager connection when available. |
 | `POST /api/network/policy` | Save fallback AP, maintenance AP, fallback timeout, and client-network portal policy to `/etc/yari/network-policy.json`. |
-| `POST /api/network/factory-reset` | Clear saved YARI network config and onboarding completion state. |
+| `POST /api/network/factory-reset` | Clear saved YARI network config, legacy TortoiseBot-managed Wi-Fi netplan files, and onboarding completion state while leaving unrelated network files intact. Pass `reboot: true` to reboot into setup AP recovery mode. |
 | `GET /api/services` | Status for known YARI services. |
 | `POST /api/services/<name>/start` | Start service. Also supports `stop`, `restart`, `enable`, `disable`. |
 | `GET /api/services/<name>/logs` | Tail journal logs for a known service. |
@@ -356,7 +356,7 @@ By default, development images keep the local portal API open on the device LAN/
 | `GET /api/apps/<id>/logs` | Tail journal logs for services declared by an app manifest. |
 | `GET /api/logs` | Log source registry and support bundle endpoint. |
 | `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |
-| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with status snapshots, sanitized YARI config files, app manifests, and logs. |
+| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with top-level `manifest.json`, status snapshots, sanitized YARI config files, app manifests, logs, redaction policy, and installed portal build metadata. Requires `X-YARI-Token` or bearer authorization when `YARI_PORTAL_API_TOKEN` is configured. |
 | `POST /api/reboot` | Reboot the device. |
 | `POST /api/shutdown` | Power off the device. |
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |
@@ -364,6 +364,7 @@ By default, development images keep the local portal API open on the device LAN/
 | `POST /api/mavlink/endpoints` | Save serial/UDP/TCP MAVLink endpoints. |
 | `GET /api/ros/status` | ROS 2 installation, node/topic status, launch profiles, launch state, MCAP recording state. |
 | `GET /api/ros/topics` | ROS 2 topic/type list. |
+| `GET /api/video/snapshot` | Capture a JPEG camera preview. Requires `X-YARI-Token` or bearer authorization when `YARI_PORTAL_API_TOKEN` is configured. |
 | `POST /api/ros/recording/start` | Starts `ros2 bag record --storage mcap`; leave topics blank to record all topics. |
 | `POST /api/ros/recording/stop` | Sends SIGINT to the active rosbag process and updates recording state. |
 | `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, RTSP/Foxglove/Atlas WebRTC target readiness, persisted stream settings, and ffmpeg RTSP process state. |

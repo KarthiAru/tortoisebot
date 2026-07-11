@@ -928,10 +928,16 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.NETPLAN_DIR.mkdir(parents=True, exist_ok=True)
         (self.module.NM_CONNECTION_DIR / "yari-wifi.nmconnection").write_text("wifi")
         (self.module.NETPLAN_DIR / "01-yari-wifi.yaml").write_text("wifi")
+        (self.module.NETPLAN_DIR / "01-tortoisebot-wifi.yaml").write_text("legacy")
+        (self.module.NETPLAN_DIR / "99-tortoisebot-wifi.yaml").write_text("legacy")
+        (self.module.NETPLAN_DIR / "10-ethernet.yaml").write_text("ethernet")
         state = self.module.factory_reset(reboot=False)
         self.assertFalse(self.module.COMPLETE_FILE.exists())
         self.assertFalse((self.module.NM_CONNECTION_DIR / "yari-wifi.nmconnection").exists())
         self.assertFalse((self.module.NETPLAN_DIR / "01-yari-wifi.yaml").exists())
+        self.assertFalse((self.module.NETPLAN_DIR / "01-tortoisebot-wifi.yaml").exists())
+        self.assertFalse((self.module.NETPLAN_DIR / "99-tortoisebot-wifi.yaml").exists())
+        self.assertTrue((self.module.NETPLAN_DIR / "10-ethernet.yaml").exists())
         self.assertFalse(state["complete"])
 
     def test_save_pairing_tokens_redacts_status_and_writes_secret_file(self):
@@ -1255,12 +1261,22 @@ class YariOnboardingTests(unittest.TestCase):
     def test_portal_api_auth_is_optional_and_accepts_token_headers(self):
         self.module.PORTAL_API_TOKEN = ""
         self.assertTrue(self.module.request_authorized({}))
+        self.assertTrue(self.module.support_bundle_authorized({}))
+        self.assertTrue(self.module.sensitive_media_authorized({}))
         self.module.PORTAL_API_TOKEN = "secret-token"
         self.assertTrue(self.module.portal_version()["api_token_required"])
         self.assertFalse(self.module.request_authorized({}))
         self.assertFalse(self.module.request_authorized({"x-yari-token": "wrong"}))
+        self.assertFalse(self.module.support_bundle_authorized({}))
+        self.assertFalse(self.module.support_bundle_authorized({"x-yari-token": "wrong"}))
+        self.assertFalse(self.module.sensitive_media_authorized({}))
+        self.assertFalse(self.module.sensitive_media_authorized({"x-yari-token": "wrong"}))
         self.assertTrue(self.module.request_authorized({"x-yari-token": "secret-token"}))
         self.assertTrue(self.module.request_authorized({"authorization": "Bearer secret-token"}))
+        self.assertTrue(self.module.support_bundle_authorized({"x-yari-token": "secret-token"}))
+        self.assertTrue(self.module.support_bundle_authorized({"authorization": "Bearer secret-token"}))
+        self.assertTrue(self.module.sensitive_media_authorized({"x-yari-token": "secret-token"}))
+        self.assertTrue(self.module.sensitive_media_authorized({"authorization": "Bearer secret-token"}))
 
     def test_network_diagnostics_reports_core_sections(self):
         diagnostics = self.module.network_diagnostics()
@@ -1284,6 +1300,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(bundle.suffixes[-2:], [".tar", ".gz"])
         with tarfile.open(bundle, "r:gz") as archive:
             names = set(archive.getnames())
+        self.assertIn("manifest.json", names)
         self.assertIn("device-status.json", names)
         self.assertIn("network-status.json", names)
         self.assertIn("network-diagnostics.json", names)
@@ -1298,7 +1315,15 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertIn("config/network-policy.json", names)
         self.assertIn("config/ota-config.json", names)
         with tarfile.open(bundle, "r:gz") as archive:
+            manifest = json.loads(archive.extractfile("manifest.json").read().decode("utf-8"))
             portal_config = json.loads(archive.extractfile("config/device-portal-config.json").read().decode("utf-8"))
+        self.assertEqual(manifest["schema_version"], "1")
+        self.assertEqual(manifest["format"], "tar.gz")
+        self.assertIn("redacted", manifest["redaction"])
+        self.assertIn("device-status.json", manifest["status_snapshots"])
+        self.assertIn("config/device-portal-config.json", manifest["config_snapshots"])
+        self.assertIn("logs/onboarding.log", manifest["logs"])
+        self.assertIn("portal", manifest)
         self.assertNotEqual(portal_config["atlas_token"], "secret")
         self.assertTrue(portal_config["atlas_token"]["configured"])
 

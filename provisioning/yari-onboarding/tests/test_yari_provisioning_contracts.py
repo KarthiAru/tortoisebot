@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+import re
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install_tortoisebot_humble.sh"
+IMAGE_SCRIPT = REPO_ROOT / "scripts" / "build_tortoisebot_image.sh"
+
+
+def apt_install_packages(script_text):
+    match = re.search(r"apt-get install -y \\\n(?P<body>.*?)(?:\n\n|\n[a-zA-Z_][a-zA-Z0-9_]+\(\))", script_text, re.S)
+    if not match:
+        return set()
+    packages = set()
+    for raw_line in match.group("body").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        packages.add(line.rstrip("\\").strip())
+    return packages
+
+
+class TortoiseBotProvisioningContractTests(unittest.TestCase):
+    def test_dependency_installer_installs_node_for_svelte_portal_builds(self):
+        packages = apt_install_packages(INSTALL_SCRIPT.read_text(encoding="utf-8"))
+        self.assertIn("nodejs", packages)
+        self.assertIn("network-manager", packages)
+        self.assertIn("avahi-daemon", packages)
+
+    def test_generated_first_run_installer_refreshes_yari_portal_before_heavy_sentinel_exit(self):
+        text = IMAGE_SCRIPT.read_text(encoding="utf-8")
+        dependency_call = 'bash "\\${REPO_DIR}/provisioning/scripts/install_tortoisebot_humble.sh"'
+        portal_installer = 'bash "\\${REPO_DIR}/provisioning/yari-onboarding/scripts/install-yari-onboarding"'
+        sentinel_check = 'if [[ -f "\\${SENTINEL}" ]]; then'
+        self.assertIn(dependency_call, text)
+        self.assertIn(portal_installer, text)
+        self.assertIn(sentinel_check, text)
+        self.assertLess(text.index(portal_installer), text.index(sentinel_check))
+        self.assertLess(text.index(sentinel_check), text.index(dependency_call))
+        self.assertLess(text.index(dependency_call), text.index('touch "\\${REPO_DIR}/YDLidar-SDK/COLCON_IGNORE"'))
+
+    def test_image_builder_copies_prebuilt_portal_into_rootfs(self):
+        text = IMAGE_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("build_yari_portal", text)
+        self.assertIn("portal/dist/index.html", text)
+        self.assertIn("${ROOT_MOUNT}/opt/yari/onboarding/web/", text)
+        self.assertIn("multi-user.target.wants/yari-onboarding.service", text)
+
+
+if __name__ == "__main__":
+    unittest.main()
