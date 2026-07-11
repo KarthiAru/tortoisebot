@@ -2712,7 +2712,7 @@ def start_atlas_bridge(payload):
     portal_secrets = read_json_file(PORTAL_SECRETS_FILE, {})
     atlas_url = str(payload.get("atlas_url") or portal_config.get("atlas_url") or "http://192.168.0.181:8100/api/v1").strip()
     vehicle_token = str(payload.get("vehicle_token") or portal_secrets.get("atlas_token") or "").strip()
-    camera_topic = str(payload.get("camera_topic") or "/camera/image_raw/compressed").strip()
+    camera_topic = str(payload.get("camera_topic") or "/camera/camera_node/image_raw/compressed").strip()
     cmd_vel_topic = str(payload.get("cmd_vel_topic") or "/cmd_vel").strip()
     max_video_fps = float(payload.get("max_video_fps") or 15.0)
     cwd = ATLAS_BRIDGE_DIR / "ros2"
@@ -2943,7 +2943,7 @@ def read_video_settings():
         "rtsp_url": "rtsp://127.0.0.1:8554/yari-video",
         "foxglove_topic": "/camera/image_raw/compressed",
         "atlas_webrtc_enabled": False,
-        "atlas_camera_topic": "/camera/image_raw/compressed",
+        "atlas_camera_topic": "/camera/camera_node/image_raw/compressed",
         "atlas_max_video_fps": 15,
     })
 
@@ -2975,7 +2975,7 @@ def save_video_settings(payload):
         "rtsp_url": rtsp_url,
         "foxglove_topic": normalize_ros_topic(payload.get("foxglove_topic"), "/camera/image_raw/compressed"),
         "atlas_webrtc_enabled": bool(payload.get("atlas_webrtc_enabled") in {True, "true", "on", "1", 1}),
-        "atlas_camera_topic": normalize_ros_topic(payload.get("atlas_camera_topic"), "/camera/image_raw/compressed"),
+        "atlas_camera_topic": normalize_ros_topic(payload.get("atlas_camera_topic"), "/camera/camera_node/image_raw/compressed"),
         "atlas_max_video_fps": atlas_max_video_fps,
         "updated": int(time.time()),
     }
@@ -3164,7 +3164,7 @@ def video_stream_targets(settings, manager_payload=None):
     portal_config = read_json_file(PORTAL_CONFIG_FILE, {})
     secrets = read_json_file(PORTAL_SECRETS_FILE, {})
     foxglove_topic = settings.get("foxglove_topic") or "/camera/image_raw/compressed"
-    atlas_topic = settings.get("atlas_camera_topic") or foxglove_topic
+    atlas_topic = settings.get("atlas_camera_topic") or "/camera/camera_node/image_raw/compressed"
     foxglove_status = manager_payload.get("foxglove", ros_topic_available(foxglove_topic, "sensor_msgs/msg/CompressedImage"))
     atlas_topic_status = manager_payload.get("atlas_topic", ros_topic_available(atlas_topic, "sensor_msgs/msg/CompressedImage"))
     atlas_ready = bool(settings.get("atlas_webrtc_enabled") and portal_config.get("atlas_url") and secrets.get("atlas_token") and atlas_topic_status.get("available"))

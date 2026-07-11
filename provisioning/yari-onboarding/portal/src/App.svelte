@@ -62,8 +62,8 @@
   let deviceProfileForm = { profile_preset: 'tortoisebot_rover', vehicle_class: 'ground_rover', autopilot_stack: 'ros_only', compute_target: 'raspberry_pi', ros_domain_id: 0, notes: '' };
   let rosRecordForm = { name: '', topics: '' };
   let selectedRosProfile = '';
-  let atlasBridgeForm = { atlas_url: 'http://192.168.0.181:8100/api/v1', camera_topic: '/camera/image_raw/compressed', cmd_vel_topic: '/cmd_vel', max_video_fps: 15 };
-  let videoForm = { stream_enabled: false, device: '', rtsp_url: 'rtsp://127.0.0.1:8554/yari-video', size: '640x480', fps: 15, encoding: 'mjpeg', bandwidth_kbps: '', foxglove_topic: '/camera/image_raw/compressed', atlas_webrtc_enabled: false, atlas_camera_topic: '/camera/image_raw/compressed', atlas_max_video_fps: 15 };
+  let atlasBridgeForm = { atlas_url: 'http://192.168.0.181:8100/api/v1', camera_topic: '/camera/camera_node/image_raw/compressed', cmd_vel_topic: '/cmd_vel', max_video_fps: 15 };
+  let videoForm = { stream_enabled: false, device: '', rtsp_url: 'rtsp://127.0.0.1:8554/yari-video', size: '640x480', fps: 15, encoding: 'mjpeg', bandwidth_kbps: '', foxglove_topic: '/camera/image_raw/compressed', atlas_webrtc_enabled: false, atlas_camera_topic: '/camera/camera_node/image_raw/compressed', atlas_max_video_fps: 15 };
   let flightLogForm = { log_id: '', endpoint_name: '' };
   let networkPolicyForm = { fallback_ap_enabled: true, fallback_timeout_sec: 45, maintenance_ap_enabled: false, serve_portal_on_client_network: true };
   let otaForm = { path: '', confirm: false };
@@ -1018,7 +1018,7 @@
       bandwidth_kbps: settings.bandwidth_kbps ?? '',
       foxglove_topic: settings.foxglove_topic || '/camera/image_raw/compressed',
       atlas_webrtc_enabled: Boolean(settings.atlas_webrtc_enabled),
-      atlas_camera_topic: settings.atlas_camera_topic || '/camera/image_raw/compressed',
+      atlas_camera_topic: settings.atlas_camera_topic || '/camera/camera_node/image_raw/compressed',
       atlas_max_video_fps: Number(settings.atlas_max_video_fps ?? settings.fps ?? 15),
     };
   }

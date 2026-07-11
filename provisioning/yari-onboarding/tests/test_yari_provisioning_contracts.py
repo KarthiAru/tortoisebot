@@ -151,6 +151,14 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("DeclareLaunchArgument('enable_slam'", launch_text)
         self.assertIn("DeclareLaunchArgument('enable_navigation'", launch_text)
 
+    def test_atlas_bridge_defaults_to_camera_ros_compressed_topic(self):
+        server_text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        service_manager_text = (REPO_ROOT / "yari-onboarding" / "scripts" / "yari-service-manager").read_text(encoding="utf-8")
+        portal_text = (REPO_ROOT / "yari-onboarding" / "portal" / "src" / "App.svelte").read_text(encoding="utf-8")
+        self.assertIn("/camera/camera_node/image_raw/compressed", server_text)
+        self.assertIn("/camera/camera_node/image_raw/compressed", service_manager_text)
+        self.assertIn("/camera/camera_node/image_raw/compressed", portal_text)
+        self.assertIn("foxglove_topic\": \"/camera/image_raw/compressed", server_text)
     def test_atlas_bridge_uses_persisted_vehicle_token_without_leaking_it_to_state(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn("portal_secrets = read_json_file(PORTAL_SECRETS_FILE, {})", text)
