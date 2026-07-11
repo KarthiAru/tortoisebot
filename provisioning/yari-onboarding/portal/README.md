@@ -2,7 +2,7 @@
 
 Svelte source for the YARI OS device-local portal.
 
-The robot does not need Node.js at runtime after installation. This source tree builds static files into `dist/`, and `install-yari-onboarding` installs the Svelte build only. If `dist/index.html` is missing, the installer will run `npm ci` when dependencies are absent or stale, run `npm run build`, and then copy `dist/` into `/opt/yari/onboarding/web`. Legacy static portal fallback is intentionally unsupported.
+The robot does not need Node.js at runtime after installation. This source tree builds static files into `dist/`, and `install-yari-onboarding` installs the Svelte build only. If `dist/index.html` is missing, the installer uses existing Node.js/npm when Node is version 18 or newer, or attempts to install Node.js 20 through apt/NodeSource, then runs `npm ci` when dependencies are absent or stale, runs `npm run build`, and copies `dist/` into `/opt/yari/onboarding/web`. Legacy static portal fallback is intentionally unsupported.
 
 ## Stack
 

@@ -17,6 +17,41 @@ install -d -m 0755 /opt/yari/onboarding/web
 PORTAL_SRC="${SRC_ROOT}/portal"
 PORTAL_DIST="${PORTAL_SRC}/dist"
 
+node_major_version() {
+  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0
+}
+
+portal_build_tools_ready() {
+  local major
+  command -v node >/dev/null 2>&1 || return 1
+  command -v npm >/dev/null 2>&1 || return 1
+  major="$(node_major_version)"
+  [[ "${major}" =~ ^[0-9]+$ ]] || return 1
+  (( major >= 18 ))
+}
+
+install_node20_build_tools() {
+  if portal_build_tools_ready; then
+    return 0
+  fi
+
+  command -v apt-get >/dev/null 2>&1 || return 1
+
+  echo "Installing Node.js 20 for Svelte portal build"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y ca-certificates curl gnupg
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    -o /etc/apt/keyrings/nodesource.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+    >/etc/apt/sources.list.d/nodesource.list
+  apt-get update
+  apt-get install -y nodejs
+
+  portal_build_tools_ready
+}
+
 run_portal_build() {
   local portal_owner build_command
   portal_owner="$(stat -c '%U' "${PORTAL_SRC}" 2>/dev/null || echo root)"
@@ -29,9 +64,9 @@ run_portal_build() {
 }
 
 if [[ ! -f "${PORTAL_DIST}/index.html" ]]; then
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "Svelte portal build is missing and npm is not installed." >&2
-    echo "Install Node.js/npm on this device, or build provisioning/yari-onboarding/portal/dist before running this installer." >&2
+  if ! install_node20_build_tools; then
+    echo "Svelte portal build is missing and Node.js >= 18/npm are not available." >&2
+    echo "Install Node.js 20, or build provisioning/yari-onboarding/portal/dist before running this installer." >&2
     exit 1
   fi
   echo "Building Svelte YARI OS portal from ${PORTAL_SRC}"

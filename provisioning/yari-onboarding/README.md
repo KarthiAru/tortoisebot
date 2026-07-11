@@ -59,7 +59,7 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 ## Web UI Stack Direction
 
-The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed; if npm is unavailable and `portal/dist/index.html` is missing, installation fails with an explicit build requirement.
+The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime after installation: the installer builds `portal/dist` when needed, copies the built static files into `/opt/yari/onboarding/web`, and the local `yari-onboarding` Python service serves those files. Legacy static portal fallback is intentionally removed. If `portal/dist/index.html` is missing, the installer first uses existing Node.js/npm when Node is version 18 or newer; otherwise it attempts to install Node.js 20 through apt/NodeSource. If build tools still are not available, installation fails with an explicit build requirement.
 
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
