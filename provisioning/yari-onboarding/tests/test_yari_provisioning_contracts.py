@@ -124,6 +124,23 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("portal-api-token.json", text)
         self.assertLess(text.index("PORTAL_API_TOKEN_FILE = Path"), text.index("def generated_portal_api_token"))
         self.assertIn("credential_file_status(PORTAL_API_TOKEN_FILE)", text)
+    def test_tortoisebot_minimal_remote_profiles_keep_camera_mcap_and_disable_slam_navigation(self):
+        server_text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        launch_text = (REPO_ROOT / ".." / "tortoisebot_bringup" / "launch" / "autobringup.launch.py").resolve().read_text(encoding="utf-8")
+        self.assertIn("Minimal hardware + Atlas remote", server_text)
+        self.assertIn("Minimal hardware + Foxglove remote", server_text)
+        self.assertIn("record_mcap:=True enable_camera:=True", server_text)
+        self.assertIn("enable_slam:=False enable_navigation:=False", server_text)
+        self.assertIn("enable_foxglove_bridge:=False foxglove_remote_access:=False", server_text)
+        self.assertIn("enable_foxglove_bridge:=True foxglove_remote_access:=True", server_text)
+        self.assertIn("compressed/chunked MCAP logging", server_text)
+        self.assertIn("--storage-config-file", server_text)
+        self.assertIn("mcap_writer_options.yaml", server_text)
+        self.assertIn("enable_slam = LaunchConfiguration('enable_slam')", launch_text)
+        self.assertIn("enable_navigation = LaunchConfiguration('enable_navigation')", launch_text)
+        self.assertIn("DeclareLaunchArgument('enable_slam'", launch_text)
+        self.assertIn("DeclareLaunchArgument('enable_navigation'", launch_text)
+
     def test_ros_launch_and_bridge_run_as_onboarding_user_and_expose_logs(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn("def user_shell_command", text)

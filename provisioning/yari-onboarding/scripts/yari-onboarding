@@ -2466,12 +2466,22 @@ def default_ros_launch_profiles():
     return {
         "profiles": [
             {
-                "name": "tortoisebot-hardware",
-                "label": "TortoiseBot hardware bringup",
-                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=True record_mcap:=True enable_camera:=True enable_foxglove_bridge:=True foxglove_remote_access:=True",
+                "name": "tortoisebot-atlas-minimal",
+                "label": "Minimal hardware + Atlas remote",
+                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=False record_mcap:=True enable_camera:=True enable_slam:=False enable_navigation:=False enable_foxglove_bridge:=False foxglove_remote_access:=False",
                 "cwd": "/home/tortoisebot/tb_ws",
                 "setup": "/home/tortoisebot/tb_ws/install/setup.bash",
                 "enabled": True,
+                "message": "Starts camera, lidar, motors, and compressed/chunked MCAP logging. Start Atlas Bridge separately from the TortoiseBot page.",
+            },
+            {
+                "name": "tortoisebot-foxglove-minimal",
+                "label": "Minimal hardware + Foxglove remote",
+                "command": "ros2 launch tortoisebot_bringup bringup.launch.py use_sim_time:=False exploration:=False record_mcap:=True enable_camera:=True enable_slam:=False enable_navigation:=False enable_foxglove_bridge:=True foxglove_remote_access:=True",
+                "cwd": "/home/tortoisebot/tb_ws",
+                "setup": "/home/tortoisebot/tb_ws/install/setup.bash",
+                "enabled": True,
+                "message": "Starts camera, lidar, motors, compressed/chunked MCAP logging, and Foxglove remote access without SLAM/Nav2.",
             },
             {
                 "name": "drone-companion",
@@ -2837,7 +2847,15 @@ def start_ros_recording(payload):
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     ROS_RECORDING_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     topic_args = "-a" if not topics else " ".join(sh_quote(str(topic)) for topic in topics)
-    cmd = f"source /opt/ros/humble/setup.bash && exec ros2 bag record --storage mcap -o {sh_quote(str(output_dir))} {topic_args}"
+    storage_config = "$(ros2 pkg prefix tortoisebot_bringup)/share/tortoisebot_bringup/config/mcap_writer_options.yaml"
+    cmd = " ".join([
+        "source /opt/ros/humble/setup.bash &&",
+        "storage_config=\"" + storage_config + "\" &&",
+        "exec ros2 bag record --storage mcap",
+        "--storage-config-file \"${storage_config}\"",
+        "-o " + sh_quote(str(output_dir)),
+        topic_args,
+    ])
     log_handle = ROS_RECORDING_LOG_FILE.open("ab")
     proc = subprocess.Popen(["bash", "-lc", cmd], stdout=log_handle, stderr=subprocess.STDOUT, start_new_session=True)
     ROS_RECORDING_PID_FILE.write_text(str(proc.pid) + "\n")

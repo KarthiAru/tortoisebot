@@ -77,6 +77,8 @@ def generate_launch_description():
     launch_rviz = LaunchConfiguration('launch_rviz')
     enable_imu = LaunchConfiguration('enable_imu')
     enable_camera = LaunchConfiguration('enable_camera')
+    enable_slam = LaunchConfiguration('enable_slam')
+    enable_navigation = LaunchConfiguration('enable_navigation')
     enable_image_optimizer = LaunchConfiguration('enable_image_optimizer')
     enable_foxglove_bridge = LaunchConfiguration('enable_foxglove_bridge')
     foxglove_remote_access = LaunchConfiguration('foxglove_remote_access')
@@ -225,11 +227,10 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(slam_pkg, 'launch', 'cartographer.launch.py')),
             condition=IfCondition(PythonExpression([
-                "'true' if ('", exploration,
-                "' == 'true' or '", exploration,
-                "' == 'True') or ('", use_sim_time,
-                "' == 'false' or '", use_sim_time,
-                "' == 'False') else 'false'",
+                "'true' if '", enable_slam,
+                "'.lower() == 'true' and (('", exploration,
+                "'.lower() == 'true') or ('", use_sim_time,
+                "'.lower() == 'false')) else 'false'",
             ])),
             launch_arguments={
                 'use_sim_time': use_sim_time,
@@ -247,7 +248,11 @@ def generate_launch_description():
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav_pkg, 'launch', 'navigation_mapbased.launch.py')),
-            condition=UnlessCondition(exploration),
+            condition=IfCondition(PythonExpression([
+                "'true' if '", enable_navigation,
+                "'.lower() == 'true' and '", exploration,
+                "'.lower() == 'false' else 'false'",
+            ])),
             launch_arguments={
                 'map': map_file,
                 'use_sim_time': use_sim_time,
@@ -260,7 +265,11 @@ def generate_launch_description():
         actions=[IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav_pkg, 'launch', 'navigation_slam.launch.py')),
-            condition=IfCondition(exploration),
+            condition=IfCondition(PythonExpression([
+                "'true' if '", enable_navigation,
+                "'.lower() == 'true' and '", exploration,
+                "'.lower() == 'true' else 'false'",
+            ])),
             launch_arguments={
                 'use_sim_time': use_sim_time,
             }.items(),
@@ -314,6 +323,10 @@ def generate_launch_description():
                               description='Start the BNO055 IMU node when use_sim_time=False'),
         DeclareLaunchArgument('enable_camera', default_value='False',
                               description='Start the camera node when use_sim_time=False'),
+        DeclareLaunchArgument('enable_slam', default_value='True',
+                              description='Start Cartographer SLAM/odom when use_sim_time=False'),
+        DeclareLaunchArgument('enable_navigation', default_value='True',
+                              description='Start Nav2 navigation when use_sim_time=False'),
         DeclareLaunchArgument('enable_image_optimizer', default_value='True',
                               description='Publish mono8 optimized camera topics when use_sim_time=False'),
         DeclareLaunchArgument('enable_foxglove_bridge', default_value='False',
