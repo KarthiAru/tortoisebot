@@ -16,6 +16,7 @@ This implementation is the first YARI OS core portal slice:
 - Profile presets for TortoiseBot, generic ROS rovers, PX4 companions, ArduPilot companions, and generic edge devices; app recommendations use this profile metadata.
 - Allowlisted service actions only; no arbitrary shell or systemctl endpoint.
 - Optional `YARI_PORTAL_API_TOKEN` protection for mutating local portal API calls in production images.
+- Dedicated /api/security/status snapshot for local/Atlas support flows, reporting sanitized portal API, setup AP, credential-file permission, SSH, and pairing posture.
 
 ## Dependencies
 

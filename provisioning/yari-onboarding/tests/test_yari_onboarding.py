@@ -1566,6 +1566,30 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertIn("redacted", status["support_bundle"]["redaction"])
         self.assertIn("onboarding", status["sources"])
         self.assertIn("system", status["sources"])
+    def test_security_status_is_sanitized(self):
+        self.module.PORTAL_API_TOKEN = "auto"
+        token = self.module.portal_api_token()
+        self.module.AP_PASSWORD = "auto"
+        ap_password = self.module.setup_ap_password()
+        self.module.PORTAL_SECRETS_FILE.write_text(json.dumps({
+            "atlas_token": "atlas-secret-token",
+            "foxglove_token": "foxglove-secret-token",
+        }))
+        status = self.module.security_status()
+        encoded = json.dumps(status)
+        self.assertTrue(status["portal_api"]["protected"])
+        self.assertEqual(status["portal_api"]["source"], "generated")
+        self.assertEqual(status["setup_ap"]["security"], "wpa-psk")
+        self.assertEqual(status["setup_ap"]["source"], "generated")
+        self.assertEqual(status["credential_files"]["portal_api_token"]["mode"], "0o600")
+        self.assertEqual(status["credential_files"]["setup_ap"]["mode"], "0o600")
+        self.assertNotIn(token, encoded)
+        self.assertNotIn(ap_password, encoded)
+        self.assertNotIn("atlas-secret-token", encoded)
+        self.assertNotIn("foxglove-secret-token", encoded)
+        self.assertTrue(status["pairing"]["atlas_token"]["configured"])
+        self.assertTrue(status["pairing"]["foxglove_token"]["configured"])
+        self.assertIn("preview", status["pairing"]["atlas_token"])
 
     def test_support_bundle_contains_status_files(self):
         self.module.PORTAL_CONFIG_FILE.write_text('{"atlas_token":"secret","device_profile":{"vehicle_class":"ground_rover"}}')
@@ -1585,6 +1609,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertIn("apps.json", names)
         self.assertIn("ota-status.json", names)
         self.assertIn("portal-version.json", names)
+        self.assertIn("security-status.json", names)
         self.assertIn("portal-assets.json", names)
         self.assertIn("config/device-portal-config.json", names)
         self.assertIn("config/network-policy.json", names)
@@ -1592,10 +1617,13 @@ class YariOnboardingTests(unittest.TestCase):
         with tarfile.open(bundle, "r:gz") as archive:
             manifest = json.loads(archive.extractfile("manifest.json").read().decode("utf-8"))
             portal_config = json.loads(archive.extractfile("config/device-portal-config.json").read().decode("utf-8"))
+            security_status = json.loads(archive.extractfile("security-status.json").read().decode("utf-8"))
         self.assertEqual(manifest["schema_version"], "1")
         self.assertEqual(manifest["format"], "tar.gz")
         self.assertIn("redacted", manifest["redaction"])
         self.assertIn("device-status.json", manifest["status_snapshots"])
+        self.assertIn("security-status.json", manifest["status_snapshots"])
+        self.assertIn("portal_api", security_status)
         self.assertIn("config/device-portal-config.json", manifest["config_snapshots"])
         self.assertIn("logs/onboarding.log", manifest["logs"])
         self.assertIn("portal", manifest)

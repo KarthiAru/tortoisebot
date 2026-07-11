@@ -3173,6 +3173,61 @@ def logs_status():
             "redaction": "passwords, tokens, secrets, authorization headers, and SSH keys are redacted",
         },
     }
+def credential_file_status(path):
+    path = Path(path)
+    if not path.exists():
+        return {"exists": False, "path": str(path)}
+    stat = path.stat()
+    return {
+        "exists": True,
+        "path": str(path),
+        "mode": oct(stat.st_mode & 0o777),
+        "owner_uid": stat.st_uid,
+        "owner_gid": stat.st_gid,
+        "bytes": stat.st_size,
+    }
+
+
+def security_status():
+    secrets_payload = read_json_file(PORTAL_SECRETS_FILE, {})
+    ssh_key_path = Path("/home") / ONBOARDING_USER / ".ssh" / "authorized_keys"
+    ssh_key_count = len(ssh_key_path.read_text().splitlines()) if ssh_key_path.exists() else 0
+    api_auth = portal_api_auth_status()
+    ap_status = setup_ap_status()
+    return {
+        "portal_api": {
+            "protected": api_auth.get("protected", False),
+            "source": api_auth.get("token_source", "open"),
+            "credential_file": api_auth.get("credential_file", ""),
+        },
+        "setup_ap": {
+            "ssid": ap_status.get("ssid", ""),
+            "address": ap_status.get("address", ""),
+            "security": ap_status.get("security", "open"),
+            "configured": ap_status.get("password_configured", False),
+            "source": ap_status.get("password_source", "open"),
+            "credential_file": ap_status.get("credential_file", ""),
+        },
+        "credential_files": {
+            "portal_api_token": credential_file_status(PORTAL_API_TOKEN_FILE),
+            "setup_ap": credential_file_status(SETUP_AP_CREDENTIAL_FILE),
+            "portal_secrets": credential_file_status(PORTAL_SECRETS_FILE),
+            "network_policy": credential_file_status(NETWORK_POLICY_CONFIG_FILE),
+        },
+        "ssh": {
+            "user": ONBOARDING_USER,
+            "authorized_key_count": ssh_key_count,
+            "authorized_keys_file": credential_file_status(ssh_key_path),
+        },
+        "pairing": {
+            "atlas_token": redact_secret(secrets_payload.get("atlas_token")),
+            "foxglove_token": redact_secret(secrets_payload.get("foxglove_token")),
+        },
+        "notes": [
+            "This endpoint is sanitized and does not expose API tokens, AP passwords, pairing tokens, or SSH key material.",
+            "Generated credential files should remain 0600 on production images.",
+        ],
+    }
 
 
 def read_log_source(source, lines=160):
@@ -3485,6 +3540,7 @@ def support_bundle():
         "video-status.json": video_status(),
         "data-status.json": data_status(),
         "logs-status.json": logs_status(),
+        "security-status.json": security_status(),
         "portal-version.json": portal_version(),
     }
     config_snapshots = support_config_snapshots()
@@ -3645,6 +3701,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/logs":
                 self.send_json(200, logs_status())
+                return
+            if path == "/api/security/status":
+                self.send_json(200, security_status())
                 return
             if path == "/api/logs/support-bundle":
                 if not support_bundle_authorized(self.headers):
