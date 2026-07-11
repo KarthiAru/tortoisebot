@@ -7,6 +7,9 @@ After=network.target
 Type=simple
 EnvironmentFile=-/etc/yari/onboarding.env
 ExecStart=/usr/local/sbin/yari-onboarding serve
+ExecStop=/usr/local/sbin/yari-onboarding shutdown-stop
+TimeoutStopSec=45
+KillSignal=SIGINT
 Restart=on-failure
 RestartSec=5
 

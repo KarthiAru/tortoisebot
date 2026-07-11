@@ -4158,6 +4158,15 @@ def serve_http(label="YARI onboarding"):
     server.serve_forever()
 
 
+def shutdown_stop():
+    results = {
+        "ros_launch": stop_ros_launch_profile(),
+        "ros_recording": stop_ros_recording(),
+        "atlas_bridge": stop_atlas_bridge(),
+    }
+    return {"ok": True, "message": "YARI managed runtime stopped for shutdown.", "results": results}
+
+
 def serve():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     policy = read_network_policy()
@@ -4179,7 +4188,7 @@ def serve():
 
 def main():
     parser = argparse.ArgumentParser(description="YARI first-boot network onboarding")
-    parser.add_argument("command", choices=["serve", "status", "ap", "web"], nargs="?", default="serve")
+    parser.add_argument("command", choices=["serve", "status", "ap", "web", "shutdown-stop"], nargs="?", default="serve")
     args = parser.parse_args()
     if args.command == "status":
         print(json.dumps(current_state(), indent=2))
@@ -4187,6 +4196,8 @@ def main():
         ensure_ap()
     elif args.command == "web":
         serve_http()
+    elif args.command == "shutdown-stop":
+        print(json.dumps(shutdown_stop(), indent=2))
     else:
         serve()
 

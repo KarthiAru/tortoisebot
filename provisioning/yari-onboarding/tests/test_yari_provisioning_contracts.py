@@ -106,6 +106,18 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn("/usr/local/bin/build-yari-portal", installer_text)
 
 
+    def test_onboarding_service_gracefully_stops_managed_runtime_on_shutdown(self):
+        unit_text = (REPO_ROOT / "yari-onboarding" / "systemd" / "yari-onboarding.service").read_text(encoding="utf-8")
+        server_text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        self.assertIn("ExecStop=/usr/local/sbin/yari-onboarding shutdown-stop", unit_text)
+        self.assertIn("TimeoutStopSec=45", unit_text)
+        self.assertIn("KillSignal=SIGINT", unit_text)
+        self.assertIn('"shutdown-stop"', server_text)
+        self.assertIn("def shutdown_stop", server_text)
+        self.assertIn("stop_ros_launch_profile()", server_text)
+        self.assertIn("stop_ros_recording()", server_text)
+        self.assertIn("stop_atlas_bridge()", server_text)
+
     def test_ros_launch_and_bridge_run_as_onboarding_user_and_expose_logs(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn("def user_shell_command", text)
