@@ -1,0 +1,24 @@
+{
+  "name": "yari-os-device-portal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build && node scripts/build-portal.mjs",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tailwindcss/vite": "^4.0.0",
+    "svelte": "^5.17.3",
+    "tailwindcss": "^4.0.0",
+    "vite": "^6.0.7"
+  },
+  "devDependencies": {
+    "@tsconfig/svelte": "^5.0.4",
+    "svelte-check": "^4.1.1",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "npm@11.6.2"
+}

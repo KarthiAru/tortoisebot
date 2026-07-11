@@ -13,6 +13,7 @@ Install host tools on the Ubuntu machine:
 ```bash
 sudo apt-get update
 sudo apt-get install -y curl xz-utils util-linux openssl coreutils
+# Also install Node.js >= 18 and npm to bake the Svelte YARI OS portal into images.
 ```
 
 Create a private config file:
@@ -22,7 +23,7 @@ cp provisioning/config/tortoisebot-image.example.env provisioning/config/tortois
 nano provisioning/config/tortoisebot-image.local.env
 ```
 
-Fill in hostname, username/password, repo URL, and branch. Wi-Fi is optional: leave `WIFI_SSID` and `WIFI_PASSWORD` blank to use the first-boot YARI setup access point at `http://192.168.4.1`. The `.local.env` file is ignored by Git so credentials stay private.
+Fill in hostname, username/password, repo URL, and branch. Wi-Fi is optional: leave `WIFI_SSID` and `WIFI_PASSWORD` blank to use the first-boot YARI setup access point at `http://192.168.4.1`. Set `YARI_PORTAL_BUILD=always` for production-style YARI OS images so missing/outdated Node tooling fails early instead of silently baking the legacy portal. The `.local.env` file is ignored by Git so credentials stay private.
 
 Build a configured image without flashing:
 
@@ -30,7 +31,7 @@ Build a configured image without flashing:
 sudo bash provisioning/scripts/build_tortoisebot_image.sh
 ```
 
-The script caches the Ubuntu `.img.xz` and expanded `.img` under `~/.cache/tortoisebot` by default. It writes finished images to `provisioning/output/`.
+The script caches the Ubuntu `.img.xz` and expanded `.img` under `~/.cache/tortoisebot` by default. It writes finished images to `provisioning/output/`. When `YARI_ONBOARDING_ENABLED=1`, the builder runs the Svelte portal build before mounting the image if Node.js >= 18 and npm are available, then copies `provisioning/yari-onboarding/portal/dist` into `/opt/yari/onboarding/web`.
 
 Force a fresh download and expansion:
 
@@ -145,3 +146,5 @@ cd ~/tb_ws
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble
 colcon build
 ```
+
+

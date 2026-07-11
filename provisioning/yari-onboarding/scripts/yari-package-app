@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+import hashlib
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+PACKAGE_EXT = ".yariapp"
+SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
+
+
+def load_manifest(path):
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("App manifest must be a JSON object")
+    for key in ("id", "name", "version", "runtime"):
+        if not str(manifest.get(key) or "").strip():
+            raise ValueError(f"App manifest is missing required field '{key}'")
+    return manifest
+
+
+def stable_json_bytes(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def default_output_path(manifest, output_dir):
+    app_id = SAFE_NAME_RE.sub("-", str(manifest["id"]).strip()).strip("-")
+    version = SAFE_NAME_RE.sub("-", str(manifest["version"]).strip()).strip("-")
+    return output_dir / f"{app_id}-{version}{PACKAGE_EXT}"
+
+
+def openssl_sign(manifest_bytes, private_key):
+    if not private_key.exists():
+        raise ValueError(f"Signing key not found: {private_key}")
+    with tempfile.TemporaryDirectory(prefix="yari-package-sign-") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        manifest_path = tmpdir_path / "manifest.json"
+        signature_path = tmpdir_path / "manifest.sig"
+        manifest_path.write_bytes(manifest_bytes)
+        result = subprocess.run(
+            [
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-sign",
+                str(private_key),
+                "-out",
+                str(signature_path),
+                str(manifest_path),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "openssl signing failed")
+        return base64.b64encode(signature_path.read_bytes()).decode("ascii")
+
+
+def add_bytes(archive, name, data):
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    info.mode = 0o644
+    archive.addfile(info, fileobj=io.BytesIO(data))
+
+
+def build_package(manifest_path, output_path, sign_key=None, signed_by="", signature_type="sha256-rsa", force=False):
+    manifest = load_manifest(manifest_path)
+    manifest_bytes = stable_json_bytes(manifest)
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    metadata = {
+        "package_format": "yari-app-package-v1",
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "app_id": manifest["id"],
+        "app_version": manifest["version"],
+        "manifest_sha256": manifest_sha256,
+    }
+    if sign_key is not None:
+        metadata.update({
+            "signed_by": signed_by or "YARI",
+            "signature_type": signature_type,
+            "signature": openssl_sign(manifest_bytes, sign_key),
+        })
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists() and not force:
+        raise ValueError(f"Output already exists: {output_path}")
+    with tarfile.open(output_path, "w:gz") as archive:
+        add_bytes(archive, "manifest.json", manifest_bytes)
+        add_bytes(archive, "yari-package.json", stable_json_bytes(metadata))
+    return {
+        "ok": True,
+        "path": str(output_path),
+        "manifest_sha256": manifest_sha256,
+        "signed": sign_key is not None,
+        "metadata": metadata,
+    }
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description="Build a local YARI .yariapp package from an app manifest.")
+    parser.add_argument("manifest", type=Path, help="Path to app manifest JSON")
+    parser.add_argument("-o", "--output", type=Path, help="Output .yariapp path")
+    parser.add_argument("--output-dir", type=Path, default=Path.cwd(), help="Directory for the default output name")
+    parser.add_argument("--sign-key", type=Path, help="OpenSSL private key used to sign manifest.json")
+    parser.add_argument("--signed-by", default="", help="Signer label written into package metadata")
+    parser.add_argument("--signature-type", default="sha256-rsa", help="Signature type label written into package metadata")
+    parser.add_argument("--force", action="store_true", help="Overwrite an existing output package")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv or sys.argv[1:])
+    manifest = load_manifest(args.manifest)
+    output = args.output or default_output_path(manifest, args.output_dir)
+    result = build_package(
+        args.manifest,
+        output,
+        sign_key=args.sign_key,
+        signed_by=args.signed_by,
+        signature_type=args.signature_type,
+        force=args.force,
+    )
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1)

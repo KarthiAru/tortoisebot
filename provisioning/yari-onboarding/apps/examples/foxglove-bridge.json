@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "id": "foxglove-bridge",
+  "name": "Foxglove Bridge",
+  "version": "core",
+  "runtime": "core-service",
+  "description": "Expose ROS 2 topics through the Foxglove WebSocket bridge.",
+  "services": ["foxglove-bridge"],
+  "ports": [8765],
+  "permissions": ["ros.read", "ros.write", "network.listen"],
+  "ui": { "path": "#apps" }
+}

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
+import base64
 import importlib.machinery
 import importlib.util
+import json
 import os
 import tarfile
 import tempfile
@@ -33,6 +35,7 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.PORTAL_SECRETS_FILE = root / "secrets.json"
         self.module.PORTAL_CONFIG_FILE = root / "portal.json"
         self.module.STATIC_NETWORK_CONFIG_FILE = root / "static-network.json"
+        self.module.NETWORK_POLICY_CONFIG_FILE = root / "network-policy.json"
         self.module.VIDEO_CONFIG_FILE = root / "video.json"
         self.module.ROS_RECORDING_CONFIG_FILE = root / "ros-recording.json"
         self.module.ROS_RECORDING_PID_FILE = root / "ros-record.pid"
@@ -43,12 +46,25 @@ class YariOnboardingTests(unittest.TestCase):
         self.module.ROS_LAUNCH_STATE_FILE = root / "ros-launch.json"
         self.module.MCAP_DIR = root / "mcap"
         self.module.UPLOAD_QUEUE_FILE = root / "upload-queue.json"
+        self.module.OTA_STATE_FILE = root / "ota-state.json"
+        self.module.OTA_CONFIG_FILE = root / "ota.json"
+        self.module.OTA_ARTIFACT_DIR = root / "ota-artifacts"
         self.module.FLIGHT_LOG_DOWNLOADS_FILE = root / "flight-log-downloads.json"
         self.module.DEVICE_ID_FILE = root / "device-id"
         self.module.HOSTNAME_FILE = root / "hostname"
         self.module.DEVICE_MODEL_PATHS = [root / "device-model"]
         self.module.SUPPORT_BUNDLE_DIR = root / "bundles"
         self.module.SERVICE_STATE_DIR = root / "services"
+        self.module.APP_MANIFEST_DIR = root / "apps.d"
+        self.module.APP_REGISTRY_DIR = root / "registry"
+        self.module.APP_PACKAGE_DIR = root / "packages"
+        self.module.APP_PACKAGE_PUBLIC_KEY_FILE = root / "app-package-public.pem"
+        self.module.APP_REQUIRE_SIGNED_PACKAGES = False
+        self.module.APP_REQUIRE_VERIFIED_PACKAGES = False
+        self.module.WEB_DIR = root / "web"
+        self.module.PORTAL_VERSION_FILE = self.module.WEB_DIR / "portal-version.json"
+        self.module.PORTAL_ASSETS_FILE = self.module.WEB_DIR / "portal-assets.json"
+        self.module.WEB_DIR.mkdir(parents=True, exist_ok=True)
         self.module.APPLY_NETWORK = False
         self.commands = []
         self.module.run = self.fake_run
@@ -89,6 +105,30 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(self.module.normalize_form_value("'secret'"), "secret")
         self.assertEqual(self.module.normalize_form_value('pa"ss'), 'pa"ss')
 
+    def test_portal_version_includes_asset_summary(self):
+        self.module.PORTAL_VERSION_FILE.write_text(json.dumps({
+            "name": "yari-os-device-portal",
+            "version": "0.1.0",
+            "build_time": "2026-07-11T00:00:00Z",
+            "git_commit": "abc1234",
+            "frontend_stack": "svelte-typescript-vite-tailwind",
+        }))
+        self.module.PORTAL_ASSETS_FILE.write_text(json.dumps({
+            "generated_at": "2026-07-11T00:00:01Z",
+            "asset_count": 2,
+            "total_bytes": 120,
+            "assets": [
+                {"path": "index.html", "bytes": 100, "sha256": "a", "gzip": False},
+                {"path": "index.html.gz", "bytes": 20, "sha256": "b", "gzip": True},
+            ],
+        }))
+        version = self.module.portal_version()
+        self.assertEqual(version["version"], "0.1.0")
+        self.assertEqual(version["assets"]["asset_count"], 2)
+        self.assertEqual(version["assets"]["gzip_asset_count"], 1)
+        self.assertEqual(version["assets"]["gzip_total_bytes"], 20)
+        self.assertTrue(version["assets"]["available"])
+
     def test_nm_keyfile_value_escapes_semicolons_and_rejects_newlines(self):
         self.assertEqual(self.module.nm_keyfile_value("ab;c\\d"), "ab\\;c\\\\d")
         with self.assertRaises(ValueError):
@@ -116,6 +156,526 @@ class YariOnboardingTests(unittest.TestCase):
         agent = next(item for item in status["services"] if item["name"] == "yari-agent")
         self.assertTrue(agent["manager_state"]["available"])
         self.assertTrue(agent["manager_state"]["remote_access"]["atlas"]["ready"])
+
+    def test_app_catalog_includes_builtin_core_apps_with_health(self):
+        catalog = self.module.app_catalog()
+        app_ids = {app["id"] for app in catalog["apps"]}
+        self.assertEqual(catalog["schema_version"], "1")
+        self.assertIn("ros2-manager", app_ids)
+        ros_app = next(app for app in catalog["apps"] if app["id"] == "ros2-manager")
+        self.assertEqual(ros_app["source"], "builtin")
+        self.assertEqual(ros_app["schema_version"], "1")
+        self.assertEqual(ros_app["runtime"], "core-service")
+        self.assertEqual(ros_app["kind"], "core-service")
+        self.assertTrue(ros_app["installed"])
+        self.assertTrue(ros_app["actions"]["start"])
+        self.assertIn("service_status", ros_app)
+        self.assertIn("recommendations", catalog)
+        self.assertIn("device_profile", catalog)
+
+    def test_app_recommendations_follow_device_profile(self):
+        ground = self.module.recommended_apps_for_profile({"vehicle_class": "ground_rover", "autopilot_stack": "ros_only"})
+        ground_ids = {item["id"] for item in ground}
+        self.assertIn("ros2-manager", ground_ids)
+        self.assertIn("foxglove-bridge", ground_ids)
+        drone = self.module.recommended_apps_for_profile({"vehicle_class": "multirotor", "autopilot_stack": "px4"})
+        drone_ids = {item["id"] for item in drone}
+        self.assertIn("mavlink-router", drone_ids)
+        self.assertIn("video-manager", drone_ids)
+        self.assertEqual(len(drone_ids), len(drone))
+
+    def test_app_catalog_loads_external_manifest_and_reports_errors(self):
+        self.module.APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_MANIFEST_DIR / "demo.json").write_text('{"schema_version":"1","id":"demo-app","name":"Demo App","version":"1.0.0","runtime":"service-bundle","services":["demo.service"],"ports":[8080],"permissions":["ros.read"]}')
+        (self.module.APP_MANIFEST_DIR / "camera.json").write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"1.0.0","runtime":"container","container":{"image":"registry.yari.io/camera:1"},"ports":[{"container":8554,"host":8554,"protocol":"tcp"}],"permissions":["camera.read"]}')
+        (self.module.APP_MANIFEST_DIR / "bad.json").write_text('{"schema_version":"2","id":"bad-app","runtime":"container","container":{"image":"bad"}}')
+        catalog = self.module.app_catalog()
+        demo = next(app for app in catalog["apps"] if app["id"] == "demo-app")
+        camera = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
+        self.assertEqual(demo["ports"], [8080])
+        self.assertEqual(demo["source"], str(self.module.APP_MANIFEST_DIR / "demo.json"))
+        self.assertEqual(camera["runtime"], "container")
+        self.assertEqual(camera["container"]["image"], "registry.yari.io/camera:1")
+        self.assertFalse(camera["actions"]["start"])
+        self.assertEqual(camera["container_status"]["active"], "runtime-missing")
+        self.assertFalse(catalog["container_runtime"]["available"])
+        self.assertTrue(any("schema_version" in item["error"] for item in catalog["errors"]))
+
+    def test_app_manifest_validation_rejects_unsafe_fields(self):
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-permission", "runtime": "container", "container": {"image": "demo"}, "permissions": ["shell"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-container", "runtime": "container"})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-service", "runtime": "service-bundle", "services": ["../../ssh"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-network", "runtime": "container", "container": {"image": "demo", "network": "container:host"}})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-protocol", "runtime": "container", "container": {"image": "demo"}, "ports": [{"container": 8554, "protocol": "sctp"}]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-env", "runtime": "container", "container": {"image": "demo", "environment": {"BAD-NAME": "1"}}})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "host-network", "runtime": "container", "container": {"image": "demo", "network": "host"}, "permissions": ["network.listen"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "etc-volume", "runtime": "container", "container": {"image": "demo"}, "volumes": ["/etc:/host-etc"], "permissions": ["storage.persistent"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "missing-storage", "runtime": "container", "container": {"image": "demo"}, "volumes": ["/var/lib/yari/apps/missing-storage:/data"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-device", "runtime": "container", "container": {"image": "demo"}, "devices": ["/dev/sda"], "permissions": ["camera.read"]})
+        with self.assertRaises(ValueError):
+            self.module.normalize_app_manifest({"schema_version": "1", "id": "bad-privileged", "runtime": "container", "container": {"image": "demo", "privileged": True}, "permissions": ["network.listen"]})
+
+    def test_app_manifest_normalizes_container_ports_and_environment(self):
+        app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "udp-video",
+            "name": "UDP Video",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/video:1", "environment": {"YARI_MODE": "test"}},
+            "ports": [{"container": 5600, "host": "5601", "protocol": "udp"}],
+        })
+        self.assertEqual(app["container"]["network"], "bridge")
+        self.assertEqual(app["container"]["environment"], {"YARI_MODE": "test"})
+        self.assertEqual(app["ports"], [{"container": 5600, "protocol": "udp", "host": 5601}])
+
+    def test_install_app_manifest_writes_validated_external_manifest(self):
+        payload = {
+            "manifest": {
+                "schema_version": "1",
+                "id": "camera-streamer",
+                "name": "Camera Streamer",
+                "version": "0.1.0",
+                "runtime": "container",
+                "container": {"image": "registry.yari.io/yari/camera-streamer:0.1.0", "network": "host"},
+                "permissions": ["camera.read", "network.listen", "network.host", "storage.persistent"],
+                "ports": [{"container": 8554, "host": 8554, "protocol": "tcp"}],
+            },
+            "replace": False,
+        }
+        result = self.module.install_app_manifest(payload)
+        manifest_path = self.module.APP_MANIFEST_DIR / "camera-streamer.json"
+        self.assertTrue(result["ok"])
+        self.assertTrue(manifest_path.exists())
+        self.assertEqual(result["app"]["runtime"], "container")
+        self.assertFalse(result["app"]["actions"]["start"])
+        with self.assertRaises(ValueError):
+            self.module.install_app_manifest(payload)
+        payload["replace"] = True
+        updated = self.module.install_app_manifest(payload)
+        self.assertEqual(updated["app"]["id"], "camera-streamer")
+
+    def test_uninstall_app_manifest_removes_only_external_manifest(self):
+        self.module.install_app_manifest({
+            "schema_version": "1",
+            "id": "demo-service",
+            "name": "Demo Service",
+            "version": "0.1.0",
+            "runtime": "service-bundle",
+            "services": ["demo.service"],
+            "permissions": ["ros.read"],
+        })
+        manifest_path = self.module.APP_MANIFEST_DIR / "demo-service.json"
+        self.assertTrue(manifest_path.exists())
+        result = self.module.uninstall_app_manifest("demo-service")
+        self.assertTrue(result["ok"])
+        self.assertFalse(manifest_path.exists())
+        with self.assertRaises(ValueError):
+            self.module.uninstall_app_manifest("ros2-manager")
+
+    def test_documented_app_manifest_examples_normalize(self):
+        examples_dir = SCRIPT.parents[1] / "apps" / "examples"
+        examples = list(examples_dir.glob("*.json"))
+        self.assertTrue(examples)
+        for path in examples:
+            app = self.module.normalize_app_manifest(json.loads(path.read_text()), str(path))
+            self.assertEqual(app["schema_version"], "1")
+            self.assertIn(app["runtime"], {"core-service", "service-bundle", "container"})
+
+    def test_app_registry_lists_local_manifests_and_install_state(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        registry_manifest = self.module.APP_REGISTRY_DIR / "camera.json"
+        registry_manifest.write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"0.1.0","runtime":"container","container":{"image":"registry.yari.io/camera:1"},"permissions":["camera.read"]}')
+        registry = self.module.app_registry()
+        camera = next(app for app in registry["apps"] if app["id"] == "camera-streamer")
+        self.assertFalse(camera["installed"])
+        self.assertFalse(camera["update"]["update_available"])
+        self.assertEqual(camera["update"]["registry_version"], "0.1.0")
+        self.assertEqual(registry["registry_dir"], str(self.module.APP_REGISTRY_DIR))
+        self.module.install_registry_app("camera-streamer")
+        registry = self.module.app_registry()
+        camera = next(app for app in registry["apps"] if app["id"] == "camera-streamer")
+        self.assertTrue(camera["installed"])
+        self.assertEqual(camera["installed_version"], "0.1.0")
+        self.assertFalse(camera["update"]["update_available"])
+        self.assertTrue((self.module.APP_MANIFEST_DIR / "camera-streamer.json").exists())
+        registry_manifest.write_text('{"schema_version":"1","id":"camera-streamer","name":"Camera Streamer","version":"0.2.0","runtime":"container","container":{"image":"registry.yari.io/camera:2"},"permissions":["camera.read"]}')
+        registry = self.module.app_registry()
+        camera = next(app for app in registry["apps"] if app["id"] == "camera-streamer")
+        self.assertEqual(camera["installed_version"], "0.1.0")
+        self.assertEqual(camera["update"]["registry_version"], "0.2.0")
+        self.assertTrue(camera["update"]["update_available"])
+        catalog = self.module.app_catalog()
+        installed = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
+        self.assertTrue(installed["update"]["update_available"])
+
+    def write_app_package(self, name, manifest, metadata=None):
+        import hashlib
+        import io
+        self.module.APP_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+        package = self.module.APP_PACKAGE_DIR / name
+        manifest_bytes = json.dumps(manifest).encode("utf-8")
+        metadata = dict(metadata or {})
+        if metadata:
+            metadata.setdefault("manifest_sha256", hashlib.sha256(manifest_bytes).hexdigest())
+            metadata_bytes = json.dumps(metadata).encode("utf-8")
+        else:
+            metadata_bytes = None
+        with tarfile.open(package, "w:gz") as archive:
+            info = tarfile.TarInfo("manifest.json")
+            info.size = len(manifest_bytes)
+            archive.addfile(info, io.BytesIO(manifest_bytes))
+            if metadata_bytes is not None:
+                meta_info = tarfile.TarInfo("yari-package.json")
+                meta_info.size = len(metadata_bytes)
+                archive.addfile(meta_info, io.BytesIO(metadata_bytes))
+        return package
+
+    def test_app_packages_list_and_install_local_yariapp(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+            "permissions": ["camera.read"],
+            "ui": {"path": "#video"},
+        }
+        package = self.write_app_package("camera-streamer-0.1.0.yariapp", manifest)
+        packages = self.module.app_packages()
+        self.assertEqual(packages["package_dir"], str(self.module.APP_PACKAGE_DIR))
+        self.assertEqual(len(packages["packages"]), 1)
+        item = packages["packages"][0]
+        self.assertEqual(item["name"], package.name)
+        self.assertEqual(item["app"]["id"], "camera-streamer")
+        self.assertFalse(item["installed"])
+        self.assertEqual(len(item["sha256"]), 64)
+        self.assertEqual(len(item["manifest_sha256"]), 64)
+        self.assertEqual(item["signature"]["status"], "missing")
+        self.assertFalse(packages["signature_required"])
+        result = self.module.install_app_package(package.name)
+        self.assertTrue(result["ok"])
+        self.assertTrue((self.module.APP_MANIFEST_DIR / "camera-streamer.json").exists())
+        installed = json.loads((self.module.APP_MANIFEST_DIR / "camera-streamer.json").read_text())
+        self.assertNotIn("source", installed)
+        self.assertNotIn("installed", installed)
+        packages = self.module.app_packages()
+        item = packages["packages"][0]
+        self.assertTrue(item["installed"])
+        self.assertFalse(item["update"]["update_available"])
+        manifest["version"] = "0.2.0"
+        manifest["container"]["image"] = "registry.yari.io/camera:2"
+        self.write_app_package("camera-streamer-0.1.0.yariapp", manifest)
+        packages = self.module.app_packages()
+        item = packages["packages"][0]
+        self.assertEqual(item["installed_version"], "0.1.0")
+        self.assertTrue(item["update"]["update_available"])
+
+    def test_app_package_upload_validates_and_stores_package(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "uploaded-camera",
+            "name": "Uploaded Camera",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+            "permissions": ["camera.read"],
+        }
+        source = self.write_app_package("source-upload.yariapp", manifest)
+        payload = {
+            "name": "uploaded-camera-0.1.0.yariapp",
+            "content_base64": base64.b64encode(source.read_bytes()).decode("ascii"),
+        }
+        result = self.module.upload_app_package(payload)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["package"]["name"], "uploaded-camera-0.1.0.yariapp")
+        self.assertEqual(result["package"]["app"]["id"], "uploaded-camera")
+        self.assertTrue((self.module.APP_PACKAGE_DIR / "uploaded-camera-0.1.0.yariapp").exists())
+        packages = self.module.app_packages()
+        self.assertTrue(any(item["name"] == "uploaded-camera-0.1.0.yariapp" for item in packages["packages"]))
+        with self.assertRaises(ValueError):
+            self.module.upload_app_package(payload)
+        payload["replace"] = True
+        self.assertTrue(self.module.upload_app_package(payload)["ok"])
+
+    def test_app_package_delete_removes_local_package(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "delete-camera",
+            "name": "Delete Camera",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+        }
+        package = self.write_app_package("delete-camera.yariapp", manifest)
+        self.assertTrue(package.exists())
+        result = self.module.delete_app_package(package.name)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["deleted"], package.name)
+        self.assertFalse(package.exists())
+        with self.assertRaises(ValueError):
+            self.module.delete_app_package("../delete-camera.yariapp")
+
+    def test_app_package_upload_rejects_invalid_content_and_oversize(self):
+        self.module.APP_PACKAGE_UPLOAD_MAX_BYTES = 4
+        with self.assertRaises(ValueError):
+            self.module.upload_app_package({"name": "bad.yariapp", "content_base64": "not-base64"})
+        with self.assertRaises(ValueError):
+            self.module.upload_app_package({"name": "bad.yariapp", "content_base64": base64.b64encode(b"not a tar").decode("ascii")})
+        self.assertFalse((self.module.APP_PACKAGE_DIR / "bad.yariapp").exists())
+        with self.assertRaises(ValueError):
+            self.module.upload_app_package({"name": "big.yariapp", "content_base64": base64.b64encode(b"12345").decode("ascii")})
+
+    def test_app_package_metadata_checksum_and_signature_gate(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "signed-camera",
+            "name": "Signed Camera",
+            "version": "1.0.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+            "permissions": ["camera.read"],
+        }
+        package = self.write_app_package("signed-camera.yariapp", manifest, {"signed_by": "YARI", "signature_type": "ed25519", "signature": "placeholder"})
+        packages = self.module.app_packages()
+        item = next(item for item in packages["packages"] if item["name"] == package.name)
+        self.assertEqual(item["signature"]["status"], "public-key-missing")
+        self.assertTrue(item["signature"]["present"])
+        self.assertFalse(item["signature"]["verified"])
+        result = self.module.install_app_package(package.name)
+        self.assertEqual(result["package"]["signature"]["status"], "public-key-missing")
+
+        self.module.APP_REQUIRE_SIGNED_PACKAGES = True
+        unsigned = self.write_app_package("unsigned-camera.yariapp", {**manifest, "id": "unsigned-camera", "name": "Unsigned Camera"})
+        with self.assertRaises(ValueError):
+            self.module.install_app_package(unsigned.name)
+        packages = self.module.app_packages()
+        unsigned_item = next(item for item in packages["errors"] if "unsigned-camera" in item["path"])
+        self.assertIn("signature", unsigned_item["error"])
+        self.module.APP_REQUIRE_SIGNED_PACKAGES = False
+
+    def test_app_package_can_require_verified_signature(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "verified-camera",
+            "name": "Verified Camera",
+            "version": "1.0.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+            "permissions": ["camera.read"],
+        }
+        self.module.APP_PACKAGE_PUBLIC_KEY_FILE.write_text("public-key")
+        self.module.has_command = lambda name: name in {"nmcli", "openssl"}
+        package = self.write_app_package("verified-camera.yariapp", manifest, {"signed_by": "YARI", "signature_type": "sha256-rsa", "signature": "c2ln"})
+        packages = self.module.app_packages()
+        item = next(item for item in packages["packages"] if item["name"] == package.name)
+        self.assertEqual(item["signature"]["status"], "verified")
+        self.assertTrue(item["signature"]["verified"])
+
+        self.module.APP_REQUIRE_VERIFIED_PACKAGES = True
+        result = self.module.install_app_package(package.name)
+        self.assertEqual(result["package"]["signature"]["status"], "verified")
+
+        def failing_command_output(args, timeout=8):
+            if args and args[0] == "openssl":
+                raise RuntimeError("bad signature")
+            return self.fake_command_output(args, timeout)
+
+        self.module.command_output = failing_command_output
+        bad = self.write_app_package("bad-signature.yariapp", {**manifest, "id": "bad-signature", "name": "Bad Signature"}, {"signed_by": "YARI", "signature_type": "sha256-rsa", "signature": "c2ln"})
+        with self.assertRaises(ValueError):
+            self.module.install_app_package(bad.name)
+        self.module.APP_REQUIRE_VERIFIED_PACKAGES = False
+
+    def test_app_package_rejects_manifest_checksum_mismatch(self):
+        manifest = {
+            "schema_version": "1",
+            "id": "bad-checksum",
+            "name": "Bad Checksum",
+            "version": "1.0.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/camera:1"},
+        }
+        bad = self.write_app_package("bad-checksum.yariapp", manifest, {"manifest_sha256": "0" * 64})
+        with self.assertRaises(ValueError):
+            self.module.install_app_package(bad.name)
+        packages = self.module.app_packages()
+        self.assertTrue(any("manifest_sha256" in item["error"] for item in packages["errors"]))
+
+    def test_app_package_rejects_unsafe_or_invalid_packages(self):
+        with self.assertRaises(ValueError):
+            self.module.package_path("../bad.yariapp")
+        self.module.APP_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+        bad = self.module.APP_PACKAGE_DIR / "bad.yariapp"
+        bad.write_text("not a tar")
+        packages = self.module.app_packages()
+        self.assertTrue(packages["errors"])
+        with self.assertRaises(ValueError):
+            self.module.install_app_package("bad.yariapp")
+
+    def test_app_registry_reports_invalid_manifests(self):
+        self.module.APP_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_REGISTRY_DIR / "bad.json").write_text('{"schema_version":"1","id":"bad app"}')
+        registry = self.module.app_registry()
+        self.assertTrue(registry["errors"])
+        with self.assertRaises(ValueError):
+            self.module.install_registry_app("missing-app")
+
+    def test_app_action_controls_only_manifest_services(self):
+        result = self.module.app_action("ros2-manager", "restart")
+        self.assertTrue(result["ok"])
+        self.assertIn(["systemctl", "restart", "yari-ros.service"], self.commands)
+        with self.assertRaises(ValueError):
+            self.module.app_action("missing-app", "start")
+        self.module.APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+        (self.module.APP_MANIFEST_DIR / "bad-service.json").write_text('{"id":"bad-service","services":["../../ssh"]}')
+        with self.assertRaises(ValueError):
+            self.module.app_action("bad-service", "start")
+
+    def test_app_healthcheck_service_and_tcp_status(self):
+        service_app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "health-service",
+            "name": "Health Service",
+            "version": "0.1.0",
+            "runtime": "service-bundle",
+            "services": ["yari-ros"],
+            "healthcheck": {"type": "service", "service": "yari-ros"},
+        })
+        service = self.module.enrich_app(service_app)
+        self.assertTrue(service["healthcheck_status"]["configured"])
+        self.assertFalse(service["healthcheck_status"]["ok"])
+        self.assertEqual(service["healthcheck_status"]["state"], "failing")
+
+        class FakeSocket:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+        original_create_connection = self.module.socket.create_connection
+        self.module.socket.create_connection = lambda address, timeout=0: FakeSocket()
+        try:
+            tcp_app = self.module.normalize_app_manifest({
+                "schema_version": "1",
+                "id": "health-tcp",
+                "name": "Health TCP",
+                "version": "0.1.0",
+                "runtime": "container",
+                "container": {"image": "registry.yari.io/test:1"},
+                "healthcheck": {"type": "tcp", "host": "127.0.0.1", "port": 8554},
+            })
+            status = self.module.app_healthcheck_status(tcp_app)
+        finally:
+            self.module.socket.create_connection = original_create_connection
+        self.assertTrue(status["ok"])
+        self.assertEqual(status["state"], "passing")
+
+    def test_app_healthcheck_rejects_unsafe_or_invalid_checks(self):
+        app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "bad-health",
+            "name": "Bad Health",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/test:1"},
+            "healthcheck": {"type": "command", "command": "whoami"},
+        })
+        status = self.module.app_healthcheck_status(app)
+        self.assertEqual(status["state"], "unsupported")
+
+        bad_tcp = dict(app)
+        bad_tcp["healthcheck"] = {"type": "tcp", "port": 0}
+        self.assertEqual(self.module.app_healthcheck_status(bad_tcp)["state"], "invalid")
+
+    def test_container_app_action_requires_runtime(self):
+        self.module.install_app_manifest({
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/yari/camera-streamer:0.1.0"},
+            "permissions": ["camera.read"],
+        })
+        with self.assertRaises(ValueError):
+            self.module.app_action("camera-streamer", "start")
+
+    def test_container_app_action_builds_runtime_command(self):
+        self.module.has_command = lambda name: name in {"docker", "nmcli"}
+        self.module.install_app_manifest({
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {
+                "image": "registry.yari.io/yari/camera-streamer:0.1.0",
+                "network": "bridge",
+                "environment": {"YARI_CAMERA_DEVICE": "/dev/video0"},
+            },
+            "ports": [{"container": 8554, "host": 8554, "protocol": "tcp"}],
+            "devices": ["/dev/video0"],
+            "volumes": ["/var/lib/yari/apps/camera-streamer:/data"],
+            "permissions": ["camera.read", "network.listen", "storage.persistent"],
+        })
+        result = self.module.app_action("camera-streamer", "start")
+        self.assertTrue(result["ok"])
+        self.assertIn(["docker", "rm", "-f", "yari-camera-streamer"], self.commands)
+        run_command = next(command for command in self.commands if command[:3] == ["docker", "run", "-d"])
+        self.assertIn("--name", run_command)
+        self.assertIn("yari-camera-streamer", run_command)
+        self.assertIn("-p", run_command)
+        self.assertIn("8554:8554/tcp", run_command)
+        udp_app = self.module.normalize_app_manifest({
+            "schema_version": "1",
+            "id": "udp-video",
+            "name": "UDP Video",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/video:1"},
+            "ports": [{"container": 5600, "host": 5601, "protocol": "udp"}],
+        })
+        self.assertIn("5601:5600/udp", self.module.container_run_command("docker", udp_app))
+        self.assertIn("--device", run_command)
+        self.assertIn("/dev/video0", run_command)
+        self.assertEqual(run_command[-1], "registry.yari.io/yari/camera-streamer:0.1.0")
+
+    def test_app_logs_read_manifest_service_journals(self):
+        logs = self.module.app_logs("log-manager", 20)
+        self.assertTrue(logs["ok"])
+        self.assertEqual(logs["app_id"], "log-manager")
+        self.assertIn(["journalctl", "-u", "yari-log-manager.service", "-n", "20", "--no-pager"], self.commands)
+
+    def test_container_app_logs_use_runtime_logs(self):
+        self.module.has_command = lambda name: name in {"docker", "nmcli"}
+        self.module.install_app_manifest({
+            "schema_version": "1",
+            "id": "camera-streamer",
+            "name": "Camera Streamer",
+            "version": "0.1.0",
+            "runtime": "container",
+            "container": {"image": "registry.yari.io/yari/camera-streamer:0.1.0"},
+            "permissions": ["camera.read"],
+        })
+        catalog = self.module.app_catalog()
+        app = next(app for app in catalog["apps"] if app["id"] == "camera-streamer")
+        self.assertTrue(app["actions"]["logs"])
+        self.assertEqual(catalog["container_runtime"]["name"], "docker")
+        logs = self.module.app_logs("camera-streamer", 40)
+        self.assertTrue(logs["ok"])
+        self.assertEqual(logs["logs"][0]["container"], "yari-camera-streamer")
+        self.assertIn(["docker", "logs", "--tail", "40", "yari-camera-streamer"], self.commands)
 
     def test_service_name_rejects_unknown_services(self):
         self.assertEqual(self.module.service_name("yari-onboarding"), "yari-onboarding.service")
@@ -162,6 +722,28 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertEqual(config["atlas_url"], "http://atlas/api/v1")
         self.assertEqual(config["atlas_upload_url"], "http://atlas/upload")
 
+    def test_save_device_profile_validates_and_persists_role_metadata(self):
+        result = self.module.save_device_profile({
+            "vehicle_class": "multirotor",
+            "autopilot_stack": "px4",
+            "compute_target": "jetson_orin",
+            "ros_domain_id": 42,
+            "notes": "lab drone",
+        })
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["profile"]["vehicle_class"], "multirotor")
+        self.assertEqual(result["profile"]["autopilot_stack"], "px4")
+        self.assertEqual(result["profile"]["compute_target"], "jetson_orin")
+        self.assertEqual(result["profile"]["ros_domain_id"], 42)
+        self.assertEqual(oct(self.module.PORTAL_CONFIG_FILE.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.module.device_status()["profile"]["vehicle_class"], "multirotor")
+
+    def test_save_device_profile_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            self.module.save_device_profile({"vehicle_class": "spaceship"})
+        with self.assertRaises(ValueError):
+            self.module.save_device_profile({"ros_domain_id": 233})
+
     def test_regenerate_device_id_writes_override(self):
         state = self.module.regenerate_device_id()
         self.assertTrue(self.module.DEVICE_ID_FILE.exists())
@@ -171,7 +753,29 @@ class YariOnboardingTests(unittest.TestCase):
         status = self.module.network_status()
         self.assertIn("static_ip", status["config"])
         self.assertTrue(status["config"]["static_ip"]["supported"])
+        self.assertIn("policy", status["config"])
+        self.assertTrue(status["config"]["policy"]["fallback_ap_enabled"])
         self.assertIn("lte", status["config"])
+
+    def test_save_network_policy_persists_recovery_settings(self):
+        result = self.module.save_network_policy({
+            "fallback_ap_enabled": False,
+            "fallback_timeout_sec": 90,
+            "maintenance_ap_enabled": True,
+            "serve_portal_on_client_network": True,
+        })
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["policy"]["fallback_ap_enabled"])
+        self.assertTrue(result["policy"]["maintenance_ap_enabled"])
+        self.assertEqual(result["policy"]["fallback_timeout_sec"], 90)
+        self.assertEqual(oct(self.module.NETWORK_POLICY_CONFIG_FILE.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(self.module.read_network_policy()["fallback_timeout_sec"], 90)
+
+    def test_save_network_policy_validates_timeout(self):
+        with self.assertRaises(ValueError):
+            self.module.save_network_policy({"fallback_timeout_sec": 4})
+        with self.assertRaises(ValueError):
+            self.module.save_network_policy({"fallback_timeout_sec": 601})
 
     def test_save_static_ip_config_validates_and_modifies_networkmanager(self):
         self.module.APPLY_NETWORK = True
@@ -307,13 +911,105 @@ class YariOnboardingTests(unittest.TestCase):
         cleared = self.module.clear_upload_queue({"keep_failed": True})
         self.assertEqual(cleared["queue"]["items"], [])
 
+
+    def test_ota_status_reports_mender_and_local_artifacts(self):
+        self.module.OTA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        artifact = self.module.OTA_ARTIFACT_DIR / "update.mender"
+        artifact.write_text("artifact")
+        (self.module.OTA_ARTIFACT_DIR / "ignore.txt").write_text("ignore")
+        status = self.module.ota_status()
+        self.assertTrue(status["supported"])
+        self.assertEqual(status["engine"], "mender")
+        self.assertFalse(status["mender"]["available"])
+        self.assertEqual(status["artifacts"][0]["name"], "update.mender")
+        self.assertEqual(status["state"]["state"], "idle")
+
+    def test_ota_config_defaults_and_save_policy(self):
+        status = self.module.ota_status()
+        self.assertEqual(status["config"]["release_channel"], "stable")
+        self.assertTrue(status["config"]["auto_check"])
+        result = self.module.save_ota_config({
+            "release_channel": "beta",
+            "auto_check": True,
+            "auto_download": True,
+            "auto_install": False,
+            "require_signed_artifacts": True,
+            "atlas_assignment_url": "https://atlas.example/api/v1/updates/assignment",
+        })
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["config"]["release_channel"], "beta")
+        self.assertEqual(oct(self.module.OTA_CONFIG_FILE.stat().st_mode & 0o777), "0o600")
+        saved = json.loads(self.module.OTA_CONFIG_FILE.read_text())
+        self.assertEqual(saved["atlas_assignment_url"], "https://atlas.example/api/v1/updates/assignment")
+        self.assertEqual(self.module.ota_status()["config"]["release_channel"], "beta")
+
+    def test_ota_config_rejects_invalid_or_unsafe_policy(self):
+        with self.assertRaises(ValueError):
+            self.module.save_ota_config({"release_channel": "nightly"})
+        with self.assertRaises(ValueError):
+            self.module.save_ota_config({"release_channel": "dev", "auto_install": True, "require_signed_artifacts": False})
+
+    def test_install_ota_artifact_requires_confirm_mender_and_safe_path(self):
+        self.module.OTA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        artifact = self.module.OTA_ARTIFACT_DIR / "update.mender"
+        artifact.write_text("artifact")
+        with self.assertRaises(ValueError):
+            self.module.install_ota_artifact({"path": "update.mender"})
+        with self.assertRaises(ValueError):
+            self.module.install_ota_artifact({"path": "update.mender", "confirm": True})
+        self.module.has_command = lambda name: name in {"nmcli", "mender"}
+        with self.assertRaises(ValueError):
+            self.module.install_ota_artifact({"path": "../outside.mender", "confirm": True})
+
+    def test_install_ota_artifact_runs_mender_for_confirmed_artifact(self):
+        self.module.has_command = lambda name: name in {"nmcli", "mender"}
+        self.module.OTA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        artifact = self.module.OTA_ARTIFACT_DIR / "update.mender"
+        artifact.write_text("artifact")
+        result = self.module.install_ota_artifact({"path": "update.mender", "confirm": True})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["state"]["state"], "installed-reboot-required")
+        self.assertIn(["mender", "install", str(artifact.resolve())], self.commands)
+        saved = json.loads(self.module.OTA_STATE_FILE.read_text())
+        self.assertEqual(saved["artifact"], str(artifact.resolve()))
+
+    def test_portal_version_defaults_to_legacy_without_built_metadata(self):
+        version = self.module.portal_version()
+        self.assertEqual(version["frontend_stack"], "legacy-static-html")
+
+    def test_portal_version_reads_built_metadata(self):
+        self.module.PORTAL_VERSION_FILE.write_text('{"name":"yari-os-device-portal","version":"0.1.0","build_time":"now","git_commit":"abc123","frontend_stack":"svelte-typescript-vite"}')
+        version = self.module.portal_version()
+        self.assertEqual(version["frontend_stack"], "svelte-typescript-vite")
+        self.assertEqual(version["git_commit"], "abc123")
+
+    def test_portal_api_auth_is_optional_and_accepts_token_headers(self):
+        self.module.PORTAL_API_TOKEN = ""
+        self.assertTrue(self.module.request_authorized({}))
+        self.module.PORTAL_API_TOKEN = "secret-token"
+        self.assertTrue(self.module.portal_version()["api_token_required"])
+        self.assertFalse(self.module.request_authorized({}))
+        self.assertFalse(self.module.request_authorized({"x-yari-token": "wrong"}))
+        self.assertTrue(self.module.request_authorized({"x-yari-token": "secret-token"}))
+        self.assertTrue(self.module.request_authorized({"authorization": "Bearer secret-token"}))
+
     def test_network_diagnostics_reports_core_sections(self):
         diagnostics = self.module.network_diagnostics()
         self.assertIn("checks", diagnostics)
         self.assertIn("networkmanager", diagnostics)
         self.assertIn("recent_clues", diagnostics["networkmanager"])
 
+    def test_logs_status_describes_support_bundle(self):
+        status = self.module.logs_status()
+        self.assertEqual(status["support_bundle_endpoint"], "/api/logs/support-bundle")
+        self.assertEqual(status["support_bundle"]["format"], "tar.gz")
+        self.assertIn("redacted", status["support_bundle"]["redaction"])
+        self.assertIn("onboarding", status["sources"])
+        self.assertIn("system", status["sources"])
+
     def test_support_bundle_contains_status_files(self):
+        self.module.PORTAL_CONFIG_FILE.write_text('{"atlas_token":"secret","device_profile":{"vehicle_class":"ground_rover"}}')
+        self.module.PORTAL_ASSETS_FILE.write_text('{"asset_count":1,"assets":[{"path":"index.html","bytes":10,"sha256":"abc","gzip":false}]}')
         bundle = self.module.support_bundle()
         self.assertTrue(bundle.exists())
         self.assertEqual(bundle.suffixes[-2:], [".tar", ".gz"])
@@ -323,7 +1019,22 @@ class YariOnboardingTests(unittest.TestCase):
         self.assertIn("network-status.json", names)
         self.assertIn("network-diagnostics.json", names)
         self.assertIn("logs/onboarding.log", names)
+        self.assertIn("apps/ros2-manager.json", names)
+        self.assertIn("apps/yari-atlas-agent.json", names)
+        self.assertIn("apps.json", names)
+        self.assertIn("ota-status.json", names)
+        self.assertIn("portal-version.json", names)
+        self.assertIn("portal-assets.json", names)
+        self.assertIn("config/device-portal-config.json", names)
+        self.assertIn("config/network-policy.json", names)
+        self.assertIn("config/ota-config.json", names)
+        with tarfile.open(bundle, "r:gz") as archive:
+            portal_config = json.loads(archive.extractfile("config/device-portal-config.json").read().decode("utf-8"))
+        self.assertNotEqual(portal_config["atlas_token"], "secret")
+        self.assertTrue(portal_config["atlas_token"]["configured"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

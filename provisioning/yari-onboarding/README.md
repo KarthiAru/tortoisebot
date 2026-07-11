@@ -12,8 +12,9 @@ This implementation is the first YARI OS core portal slice:
 - Local web UI for Wi-Fi SSID/password and hostname.
 - Persistent Wi-Fi profile written to `/etc/NetworkManager/system-connections/yari-wifi.nmconnection` when NetworkManager is available.
 - Netplan fallback writer for current Ubuntu Server compatibility.
-- Device, network, service, log, MAVLink, ROS, video, and data status API scaffolding.
+- Device profile, network, service, log, MAVLink, ROS, video, data, app, OTA readiness, and recovery-policy API scaffolding.
 - Allowlisted service actions only; no arbitrary shell or systemctl endpoint.
+- Optional `YARI_PORTAL_API_TOKEN` protection for mutating local portal API calls in production images.
 
 ## Dependencies
 
@@ -58,25 +59,26 @@ The UI has a Light/Dark segmented toggle in the header. The selected theme is sa
 
 ## Web UI Stack Direction
 
-The current portal is intentionally dependency-free static HTML/CSS/JS served by the local `yari-onboarding` Python service. That keeps first-boot networking robust: no Node runtime, no build artifacts needed on the robot, and fewer ways for the recovery UI to fail.
+The device portal source now lives in `portal/` as a Svelte + TypeScript + Vite + Tailwind CSS project. The robot does not need Node.js at runtime: the built static files are installed into `/opt/yari/onboarding/web` and served by the local `yari-onboarding` Python service. If `portal/dist/index.html` is not present, the installer falls back to the legacy dependency-free `web/` bundle so recovery installs remain robust.
 
 YARI OS should follow the Atlas design-system direction documented in `yari-atlas/docs/design-system.md` and implemented under `yari-atlas/frontend/components/design-system`:
 
 - Keep the visual language compact, operational, border-led, and mostly neutral.
 - Use neutral black/white action tokens for primary CTAs; do not use blue/cyan/red for normal actions.
 - Reserve color for semantic status, brand artwork, and destructive/error/warning states.
-- Prefer local editable primitives inspired by shadcn/Radix instead of adopting a large UI library wholesale.
+- Prefer local editable primitives instead of adopting a large UI library wholesale.
 - Use Lucide-style outline icons for controls, with accessible labels for icon-only actions.
 
 Recommended evolution:
 
 1. Keep the device runtime as static assets served by the local agent.
-2. Move source development to a small Vite + React + TypeScript app when the UI outgrows one file.
-3. Use Tailwind CSS for source development, but compile the result to static files for the device image.
-4. Share Atlas/YARI design tokens as CSS variables or a small package consumed by Atlas, YARI OS, docs, and device portals.
-5. Build a small YARI OS primitive set mirroring Atlas concepts: Button, IconButton, FormField, TextInput, Select, Tabs, StatusPill, AlertBanner, Dialog/Sheet, Table, and Toast.
-6. Keep privileged operations behind the local backend API, not in browser code.
-7. Consider a Rust single-binary backend later if packaging Python becomes painful across Raspberry Pi, Jetson, and generic Ubuntu edge computers.
+2. Use Svelte + TypeScript + Vite + Tailwind CSS for portal source development.
+3. Use Tailwind CSS plus neutral YARI/Atlas design tokens for source development, but compile the result to static files for the device image.
+4. Precompress generated HTML/CSS/JS/JSON/SVG assets with gzip during build/install.
+5. Share Atlas/YARI design tokens as CSS variables or a small package consumed by Atlas, YARI OS, docs, and device portals.
+6. Build a small YARI OS primitive set mirroring Atlas concepts: Button, IconButton, FormField, TextInput, Select, Tabs, StatusPill, AlertBanner, Dialog/Sheet, Table, and Toast.
+7. Keep privileged operations behind the local backend API, not in browser code.
+8. Consider a Rust single-binary backend later if packaging Python becomes painful across Raspberry Pi, Jetson, and generic Ubuntu edge computers.
 
 ## YARI OS Evolution Plan
 
@@ -100,7 +102,117 @@ Platform phases:
 3. **Platform abstraction**: NetworkManager-first adapters for Raspberry Pi, Jetson, and generic Ubuntu edge computers, with netplan/systemd-networkd only as compatibility fallbacks.
 4. **Secure production posture**: unique AP credentials, signed configuration changes, secrets stored with `0600`, no arbitrary shell endpoint, disabled default SSH in production images, and physical/factory reset path.
 5. **OTA and release management**: signed A/B rootfs updates, rollback, release channels, and Atlas-managed rollout status.
-6. **App framework**: YARI apps packaged as containers or service bundles with manifests, install/start/stop/logs/update exposed through the local portal and Atlas. Apps may be C++, Python, Rust, ROS 2 packages, or containers depending on the job.
+6. **App framework**: YARI apps packaged as containers or service bundles with manifests, install/start/stop/logs/update exposed through the local portal and Atlas. The current first slice exposes an app catalog at `/api/apps` from built-in core manifests plus optional JSON manifests in `/etc/yari/apps.d`, with service-backed start/stop/restart/log actions for declared app services and Docker/Podman lifecycle/log actions for container apps. Apps may be C++, Python, Rust, ROS 2 packages, or containers depending on the job.
+
+### YARI App Manifest v1
+
+YARI app manifests are versioned JSON files. The schema lives at `apps/manifest.schema.json`, examples live under `apps/examples/`, and fresh installs copy both to `/opt/yari/onboarding/apps`. Locally installed app manifests live in `/etc/yari/apps.d/*.json`; the portal merges those with built-in core app manifests.
+
+Manifest runtimes:
+
+- `core-service`: YARI-owned systemd units baked into the base OS, such as Foxglove Bridge, Atlas Agent, MAVLink Router, ROS 2 Manager, Video Manager, and Log Manager.
+- `service-bundle`: an app represented by one or more systemd units already installed on the device. The current backend can install/update their manifests, uninstall external manifests, start, stop, restart, and tail logs for declared services.
+- `container`: a future YARI app runtime backed by Docker/Podman. The current backend can install/update and uninstall these manifests, detects Docker/Podman availability, shows container status, and can start/stop/restart a safe first subset of container apps from manifest metadata. Bundled local registry manifests under `/opt/yari/onboarding/apps/examples` can be installed from the portal; Atlas registry install/update orchestration is still planned. The Svelte portal presents this as an operator workflow with recommended apps, installed app cards, registry install/update cards, health metadata, and app logs, while keeping raw manifest JSON as a support/development path.
+
+Minimal service-bundle manifest:
+
+```json
+{
+  "schema_version": "1",
+  "id": "rosbag-recorder",
+  "name": "ROS 2 MCAP Recorder",
+  "version": "0.1.0",
+  "runtime": "service-bundle",
+  "services": ["yari-ros"],
+  "permissions": ["ros.read", "storage.write", "logs.write"],
+  "ui": { "path": "#ros" }
+}
+```
+
+Supported health checks:
+
+- `service`: verifies a declared systemd service is active.
+- `tcp`: opens a TCP connection to `host`/`port`, defaulting host to `127.0.0.1`.
+- `http`: sends a GET request to an `http://` or `https://` URL and treats 2xx/3xx as passing.
+
+Manifest-defined shell/command health checks are intentionally unsupported; app manifests should not become arbitrary command execution surfaces.
+
+The Python backend enforces the same safety constraints used by the schema for container manifests: network mode must be `bridge`, `host`, or `none`; port protocols must be `tcp` or `udp`; and environment variable names must use shell-safe identifier syntax. Device mappings, host networking, privileged mode, Linux capabilities, and host volumes are also permission-gated so an app manifest is a declarative permission request rather than a raw container escape hatch.
+
+Current container permission gates:
+
+| Permission | Allows |
+| --- | --- |
+| `camera.read` | `/dev/video*` and `/dev/media*` device mappings. |
+| `serial.read-write` | `/dev/ttyACM*`, `/dev/ttyUSB*`, `/dev/ttyAMA*`, and `/dev/serial/by-id/*` mappings. |
+| `can.read-write` | `/dev/can*` mappings. |
+| `gpu.access` | `/dev/dri/*`, `/dev/nvhost*`, and `/dev/nvmap` mappings. |
+| `network.host` | Container host-network mode. |
+| `storage.persistent` | App-scoped host volumes under `/var/lib/yari/apps/<app-id>/`, `/var/log/yari/apps/<app-id>/`, or `/run/yari/apps/<app-id>/`. |
+| `system.capabilities` | A small allowlist of Linux capabilities such as `NET_ADMIN`, `NET_RAW`, `SYS_NICE`, and `SYS_TIME`. |
+| `system.privileged` | Privileged containers for trusted first-party apps only. |
+
+Local app packages:
+
+- `.yariapp`, `.tar.gz`, and `.tgz` files placed in `/var/lib/yari/app-packages` are treated as local app packages.
+- The current package format is intentionally minimal: a tar archive containing `manifest.json` or `app.json` at the root or one directory below it.
+- Packages may also include `yari-package.json` with metadata such as `manifest_sha256`, `signed_by`, `signature_type`, and a base64 `signature` over the embedded manifest bytes.
+- If `manifest_sha256` is present, the backend verifies it against the embedded manifest before installing anything.
+- `/api/apps/packages` lists package filename, size, package SHA-256, manifest SHA-256, signature/verification status, embedded manifest metadata, installed version, and update status.
+- `POST /api/apps/packages/upload` accepts a base64 `.yariapp`/tar upload, validates the archive and manifest, then stores it in `/var/lib/yari/app-packages`.
+- `POST /api/apps/packages/<filename>/install` installs only the embedded manifest through the same validation path as registry/manual manifests; arbitrary package extraction is intentionally not supported yet.
+- `POST /api/apps/packages/<filename>/delete` removes the local package file. It does not uninstall an already-applied app manifest or stop services.
+- Development images allow unsigned packages. Production images can set `YARI_REQUIRE_SIGNED_APP_PACKAGES=1` so package install fails unless signature metadata is present.
+- Images that include an app signing public key can set `YARI_APP_PACKAGE_PUBLIC_KEY_FILE=/etc/yari/app-package-public.pem`; when `openssl` is available, package signatures are verified with `openssl dgst -sha256 -verify`. Set `YARI_REQUIRE_VERIFIED_APP_PACKAGES=1` to reject packages whose manifest signature is missing, invalid, unverifiable, or signed with an unavailable key.
+- Future signed YARI app bundles can extend this with container image references, detached signatures, provenance, Atlas registry metadata, and stronger signature formats without changing the local app-management surface.
+
+Create a local development package from an app manifest:
+
+```bash
+yari-package-app app.json --output-dir /var/lib/yari/app-packages
+```
+
+From the portal, open Apps, choose the package file, upload it, then install or apply it from the Local Packages card.
+
+Create and verify a signed package for stricter images:
+
+```bash
+openssl genrsa -out yari-app-private.pem 4096
+openssl rsa -in yari-app-private.pem -pubout -out yari-app-public.pem
+yari-package-app app.json \
+  --output-dir /var/lib/yari/app-packages \
+  --sign-key yari-app-private.pem \
+  --signed-by "YARI Robotics"
+sudo install -m 0644 yari-app-public.pem /etc/yari/app-package-public.pem
+sudo systemctl restart yari-onboarding.service
+```
+
+Local registry update detection:
+
+- `/api/apps/registry` compares each registry manifest with the installed manifest of the same app ID.
+- The comparison uses a normalized SHA-256 manifest digest, not only the version string.
+- Registry cards expose `installed_version`, `registry_version`, `manifest_digest`, `registry_digest`, and `update_available` so the portal and Atlas can show whether an app manifest should be applied.
+- This is intentionally local-first; cloud registry metadata and signed app packages can build on the same fields later.
+
+Minimal container manifest:
+
+```json
+{
+  "schema_version": "1",
+  "id": "camera-streamer",
+  "name": "Camera Streamer",
+  "version": "0.1.0",
+  "runtime": "container",
+  "ports": [{ "container": 8554, "host": 8554, "protocol": "tcp" }],
+  "permissions": ["camera.read", "network.listen", "network.host", "storage.persistent"],
+  "devices": ["/dev/video0"],
+  "volumes": ["/var/lib/yari/apps/camera-streamer:/data"],
+  "container": {
+    "image": "registry.yari.io/yari/camera-streamer:0.1.0",
+    "network": "host"
+  }
+}
+```
 
 ## OTA And Mender Direction
 
@@ -139,7 +251,7 @@ Mender should be treated as OTA plumbing, not the YARI OS product layer:
 - Use Mender artifact format, client, A/B rootfs layout, boot integration, and rollback behavior where it fits.
 - Do not require hosted Mender SaaS for normal YARI OS operation.
 - Let Atlas provide device inventory, update channels, rollout campaigns, user approval, status, and audit history.
-- Start with standalone/manual artifact installs, then add Atlas-driven downloads and staged rollouts.
+- Start with standalone/manual artifact installs, then add Atlas-driven downloads and staged rollouts. The current portal exposes a guarded local OTA readiness slice: `GET /api/ota/status` reports Mender availability, local artifacts from `/var/lib/yari/ota-artifacts`, saved policy from `/etc/yari/ota.json`, and the last install state; `POST /api/ota/config` saves release-channel/update policy; `POST /api/ota/install` can install a confirmed `.mender` or `.yarios` artifact from that directory when the Mender client is installed.
 
 OTA phases:
 
@@ -187,12 +299,26 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 
 `yari-agent.service` publishes lightweight device telemetry, Atlas/Foxglove remote-access readiness, and processes the local upload queue at `/var/lib/yari/upload-queue.json`. All YARI service units installed by this package run concrete `yari-service-manager` roles and are enabled by the installer so fresh images publish status on boot; the old placeholder service script has been removed. The Data page can enqueue discovered MCAP and flight-log files, retry failed items, and clear completed items. Uploads require an Atlas device token saved through the Setup page. By default, the agent posts multipart uploads to `<atlas_url>/logs/upload`; set `atlas_upload_url` in `/etc/yari/device-portal.json` or the Setup page when Atlas exposes a different ingestion endpoint. The multipart payload contains a `metadata` JSON field and a binary `file` field, authenticated with `Authorization: Bearer <atlas_token>`.
 
+## Device Profile
+
+YARI OS stores device role metadata in `/etc/yari/device-portal.json` under `device_profile`. The profile captures vehicle class, autopilot stack, compute target, ROS domain ID, and operator notes. This gives the portal, app runtime, and future Atlas orchestration a consistent way to select defaults for PX4/ArduPilot drones, ROS-only ground robots, Jetson companion computers, and generic edge deployments. The app catalog now includes profile-based recommendations so operators can see which core apps are expected for the selected role.
+
+## Network Recovery Policy
+
+YARI OS stores network recovery behavior in `/etc/yari/network-policy.json`. The policy controls whether the setup AP returns after client Wi-Fi failure, how long boot waits before fallback, whether maintenance AP should be forced on boot, and whether the portal should continue to serve on the normal client network. The Network page presents these settings with a readiness overview and a Wi-Fi scan table so operators can choose an SSID and jump back to Setup without using terminal commands. This keeps field recovery self-serve while allowing production devices to disable AP fallback where a deployment requires tighter network posture.
+
+## Portal API Access
+
+By default, development images keep the local portal API open on the device LAN/setup AP for a smooth first-boot flow. Production images can set `YARI_PORTAL_API_TOKEN` in the systemd environment or `/etc/yari/onboarding.env`; when set, all `POST` endpoints require either `X-YARI-Token: <token>` or `Authorization: Bearer <token>`. Read-only status endpoints remain available so operators can diagnose network/service state before entering the token. The Svelte portal shows an API token field only when `/api/portal/version` reports that a token is required, then stores the entered value in browser `localStorage` as `yari-api-token`.
+
 ## API Summary
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/device/status` | Device identity, OS, memory, storage, temperature, IPs, onboarding state. |
+| `GET /api/device/status` | Device identity, OS, memory, storage, temperature, IPs, onboarding state, and portal version metadata. |
 | `POST /api/device/regenerate-id` | Generate a new local YARI device ID override. |
+| `POST /api/device/profile` | Save vehicle class, autopilot stack, compute target, ROS domain ID, and notes in `/etc/yari/device-portal.json`. |
+| `GET /api/portal/version` | Installed portal build metadata and frontend stack. |
 | `GET /api/setup/status` | SSH key count and redacted Atlas/Foxglove token status. |
 | `POST /api/setup/config` | Save Wi-Fi, hostname, SSH key/password, Atlas URL/upload URL, Atlas token, and Foxglove token. |
 | `GET /api/network/status` | NetworkManager state, interfaces, active connections, AP/client config, DNS, Ethernet, static IPv4 config, LTE placeholder. |
@@ -203,13 +329,25 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `POST /api/network/wifi/forget` | Remove the saved `yari-wifi` client profile and return to incomplete onboarding state. |
 | `POST /api/network/ap/enable` | Start setup AP mode. |
 | `POST /api/network/static-ip` | Save validated static IPv4 settings and apply them to a NetworkManager connection when available. |
+| `POST /api/network/policy` | Save fallback AP, maintenance AP, fallback timeout, and client-network portal policy to `/etc/yari/network-policy.json`. |
 | `POST /api/network/factory-reset` | Clear saved YARI network config and onboarding completion state. |
 | `GET /api/services` | Status for known YARI services. |
 | `POST /api/services/<name>/start` | Start service. Also supports `stop`, `restart`, `enable`, `disable`. |
 | `GET /api/services/<name>/logs` | Tail journal logs for a known service. |
+| `GET /api/apps` | YARI app catalog from built-in core manifests and `/etc/yari/apps.d/*.json`, including manifest schema version, runtime, service/container health, detected Docker/Podman runtime, permissions, ports, supported actions, device profile, and profile-based recommendations. |
+| `GET /api/apps/registry` | Local app registry from `/opt/yari/onboarding/apps/examples`, with install state and validation errors. |
+| `GET /api/apps/packages` | Local `.yariapp`/tar package inventory from `/var/lib/yari/app-packages`, including package SHA-256, manifest SHA-256, signature/verification status, embedded manifest, install state, and update status. |
+| `POST /api/apps/registry/<id>/install` | Install or update one local registry app manifest into `/etc/yari/apps.d`. |
+| `POST /api/apps/packages/upload` | Upload a base64 `.yariapp`/tar package into `/var/lib/yari/app-packages` after validating the package archive, manifest, checksum, and signature policy. |
+| `POST /api/apps/packages/<filename>/install` | Install or update the embedded manifest from a local app package without extracting arbitrary payload files. |
+| `POST /api/apps/packages/<filename>/delete` | Remove a local package file from `/var/lib/yari/app-packages`; installed app manifests are left unchanged. |
+| `POST /api/apps/install` | Install or update a validated external YARI App Manifest v1 JSON file into `/etc/yari/apps.d`. Built-in app IDs cannot be replaced. |
+| `POST /api/apps/<id>/uninstall` | Remove an external manifest from `/etc/yari/apps.d`; built-in apps cannot be removed. |
+| `POST /api/apps/<id>/start` | Start services declared by an app manifest. Also supports `stop` and `restart`. Container lifecycle actions are enabled when Docker or Podman is installed and the manifest has a valid `container.image`. |
+| `GET /api/apps/<id>/logs` | Tail journal logs for services declared by an app manifest. |
 | `GET /api/logs` | Log source registry and support bundle endpoint. |
 | `GET /api/logs/<source>` | Tail `onboarding`, `system`, `ros`, or `mavlink` logs. |
-| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with device, network, network diagnostics, service, ROS/video/data status snapshots and logs. |
+| `GET /api/logs/support-bundle` | Download a `.tar.gz` support bundle with status snapshots, sanitized YARI config files, app manifests, and logs. |
 | `POST /api/reboot` | Reboot the device. |
 | `POST /api/shutdown` | Power off the device. |
 | `GET /api/autopilot/status` | PX4/ArduPilot companion-computer status scaffold, serial devices, MAVLink endpoints, firmware-upload placeholder. |
@@ -222,6 +360,9 @@ The `.local` name depends on mDNS support on the client computer. Use the router
 | `GET /api/video/status` | Camera/media device status, V4L2 discovery, stream profiles, RTSP/Foxglove/Atlas WebRTC target readiness, persisted stream settings, and ffmpeg RTSP process state. |
 | `POST /api/video/settings` | Saves stream enablement, device, RTSP URL, frame size, FPS, encoding, bandwidth, Foxglove compressed topic, and Atlas WebRTC camera topic/fps settings. |
 | `GET /api/data/status` | MCAP files, PX4/ArduPilot local/remote flight logs, download queue, upload queue, and storage cleanup status. |
+| `GET /api/ota/status` | OTA engine readiness, Mender client status, saved update policy, local `.mender`/`.yarios` artifacts, and last install state. |
+| `POST /api/ota/config` | Save release channel, auto-check/download/install flags, signed-artifact requirement, and Atlas assignment URL. |
+| `POST /api/ota/install` | Installs a confirmed local OTA artifact from `/var/lib/yari/ota-artifacts` using Mender when available. |
 | `POST /api/data/flight-logs/download` | Queues a PX4/ArduPilot MAVLink LOG download by `log_id`. |
 | `POST /api/data/flight-logs/retry` | Requeues failed/missing flight-log download requests. |
 | `POST /api/data/uploads/enqueue` | Adds selected discovered MCAP/flight logs to the local Atlas upload queue. |
@@ -266,3 +407,7 @@ The current autopilot, MAVLink, ROS, video, and data endpoints are scaffolding. 
 - `yari-ros`: configurable launch profiles, topic discovery, lifecycle state, rosbag/MCAP recording controls.
 - `yari-video`: camera selection, encoding profile, RTSP process supervision, Foxglove compressed-topic readiness, and Atlas WebRTC topic readiness.
 - `yari-log-manager`: MCAP, `.ulg`, `.bin`, service log indexing, upload, and download.
+
+
+
+

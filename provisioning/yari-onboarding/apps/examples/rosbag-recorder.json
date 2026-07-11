@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "id": "rosbag-recorder",
+  "name": "ROS 2 MCAP Recorder",
+  "version": "0.1.0",
+  "runtime": "service-bundle",
+  "description": "Manage MCAP recording profiles for ROS 2 robot and drone logs.",
+  "services": ["yari-ros"],
+  "permissions": ["ros.read", "storage.write", "logs.write"],
+  "volumes": ["/home/tortoisebot/tortoisebot_mcap:/data/mcap"],
+  "healthcheck": { "type": "service", "service": "yari-ros" },
+  "ui": { "path": "#ros" }
+}

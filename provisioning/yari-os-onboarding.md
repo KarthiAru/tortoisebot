@@ -102,7 +102,7 @@ For the MVP, the setup AP may be open when `YARI_ONBOARDING_AP_PASSWORD` is blan
 ## Security Rules
 
 - The setup web service binds only to the setup AP interface.
-- The setup API requires the AP password or a short-lived physical-access token.
+- The setup API requires the AP password, `YARI_PORTAL_API_TOKEN`, or a short-lived physical-access token for mutating actions in production images.
 - Wi-Fi passwords and device tokens are written with `0600` permissions.
 - The setup AP is disabled once the device successfully joins a configured network, unless the operator explicitly enables maintenance mode.
 - A hardware reset path should clear network credentials and re-enable setup AP.
@@ -144,11 +144,11 @@ Implemented Phase 1 pieces:
 - NetworkManager-first Wi-Fi save path writing `/etc/NetworkManager/system-connections/yari-wifi.nmconnection`.
 - Reboot-after-save behavior for single-radio devices.
 - Setup fields for Wi-Fi scan, password, hostname, SSH key/password, Atlas token, and Foxglove token.
-- Device status with hardware model, OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, and onboarding state.
-- Network status with active connections, interfaces, AP/client state, DNS, configurable static IPv4, Ethernet, and LTE placeholder.
-- Allowlisted service start/stop/restart/enable/disable/logs for YARI-managed services only.
-- Logs page with onboarding, system journal, ROS log, MAVLink log views, and downloadable support bundle endpoint.
-- Maintenance controls for reboot, shutdown, factory-reset network, and regenerate device ID.
+- Device status with hardware model, OS, kernel, architecture, CPU, RAM, disk, temperature, IPs, uptime, onboarding state, configurable device profile, and an operator readiness dashboard for network, services, apps, OTA, and profile state.
+- Network status with an operator overview for connectivity, configured Wi-Fi, setup AP fallback, route, DNS, visible Wi-Fi networks, active connections, interfaces, AP/client state, configurable static IPv4, recovery policy, Ethernet, and LTE placeholder.
+- Allowlisted service start/stop/restart/enable/disable/logs for YARI-managed services only, presented as operator service cards with active/enabled state and YARI manager heartbeat details.
+- Logs page with backend-discovered log sources, onboarding/system/ROS/MAVLink log views, and a downloadable support bundle panel describing sanitized config/app-manifest snapshots and secret redaction.
+- Maintenance controls for reboot, shutdown, factory-reset network, regenerate device ID, and local OTA readiness/install status, with optional token protection for mutating API calls.
 
 Implemented Phase 2 foundation:
 
@@ -209,6 +209,7 @@ Current API surface:
 | Network | `POST /api/network/wifi/save` | Save Wi-Fi credentials and hostname using the same path as first boot setup. |
 | Network | `POST /api/network/ap/enable` | Force setup AP mode for maintenance. |
 | Network | `POST /api/network/factory-reset` | Remove saved YARI network config and clear onboarding completion state. |
+| Network | `POST /api/network/policy` | Save fallback AP, maintenance AP, fallback timeout, and client-network portal behavior. |
 | Services | `GET /api/services` | Status for allowlisted YARI services. |
 | Services | `POST /api/services/<name>/start` | Start an allowlisted service. Also supports `stop`, `restart`, `enable`, and `disable`. |
 | Services | `GET /api/services/<name>/logs` | Tail journal logs for an allowlisted service. |
@@ -219,8 +220,11 @@ Current API surface:
 | ROS 2 | `GET /api/ros/topics` | ROS 2 topic/type list. |
 | Video | `GET /api/video/status` | Camera/media device discovery and video service status. |
 | Data | `GET /api/data/status` | Recent MCAP files and log-manager service status. |
+| OTA | `GET /api/ota/status` | Mender readiness, update policy, local OTA artifact list, and last install state. |
+| OTA | `POST /api/ota/config` | Save release channel and update policy in `/etc/yari/ota.json`. |
+| OTA | `POST /api/ota/install` | Confirmed local `.mender`/`.yarios` install from `/var/lib/yari/ota-artifacts`. |
 
-Service controls are intentionally allowlisted. The portal does not expose arbitrary `systemctl` access.
+Service controls are intentionally allowlisted. The portal does not expose arbitrary `systemctl` access; the Services page shows only known YARI units and app-declared units, with manager heartbeat context where available.
 
 ## YARI OS Evolution Roadmap
 
@@ -232,7 +236,7 @@ Current implementation provides the first practical slice: persistent portal, Wi
 2. Add per-device AP passwords for production images.
 3. Add a captive portal redirect for phones and tablets.
 4. Add downloadable support bundles with onboarding logs, NetworkManager logs, system info, and ROS status.
-5. Add OTA-safe migration for `/etc/yari/*` and NetworkManager profile changes.
+5. Add OTA-safe migration for `/etc/yari/*` and NetworkManager profile changes. The current local slice reports Mender readiness, stores release policy in `/etc/yari/ota.json`, and can install confirmed artifacts from `/var/lib/yari/ota-artifacts`; Atlas-assigned downloads, signed rollout policy, health confirmation, and rollback reporting remain future work.
 
 ### Phase 2: Autopilot + Companion Computer Layer
 
@@ -259,6 +263,10 @@ BlueOS-style self-service should come from an app model, not hand-editing system
   "ui": { "path": "/apps/example-app/" }
 }
 ```
+
+Current first slice: `/api/apps` discovers built-in core app manifests and optional JSON manifests from `/etc/yari/apps.d`, then the Svelte portal shows app health, services, ports, permissions, profile-based recommendations, and service-backed start/stop/restart/log actions.
+
+Manifest contract added in this repo: `provisioning/yari-onboarding/apps/manifest.schema.json` defines YARI App Manifest v1. Example manifests cover a core Foxglove Bridge service, a ROS 2 MCAP recorder service bundle, and a future containerized camera streamer. Fresh installs and built images copy the schema/examples to `/opt/yari/onboarding/apps`, while local installed manifests stay in `/etc/yari/apps.d/*.json`. The portal can now install/update validated external manifests and uninstall external manifests; built-in app IDs are protected from replacement/removal. The backend also detects Docker/Podman and can start, stop, and restart the first safe subset of container apps from manifest metadata. A local registry endpoint now exposes bundled example manifests so the portal can install known apps without hand-pasting JSON. App health now includes safe `service`, `tcp`, and `http` probes while deliberately rejecting manifest-defined shell commands.
 
 Portal requirements for apps:
 
@@ -288,3 +296,6 @@ Keep hardware-specific logic behind adapters:
 | Generic Ubuntu mini PC | NetworkManager | UDP/serial MAVLink | USB/IP camera | Good for lab and industrial boxes. |
 
 The core portal should stay ROS-independent and vehicle-independent. TortoiseBot, PX4 drones, ArduPilot rovers, and future edge devices should share the same onboarding, network, service, log, app, and token foundation.
+
+
+

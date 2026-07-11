@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 import argparse
+import base64
+import binascii
+import hashlib
+import http.client
 import ipaddress
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -10,12 +15,13 @@ import socket
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 STATE_DIR = Path(os.environ.get("YARI_ONBOARDING_STATE_DIR", "/var/lib/yari/onboarding"))
 STATE_FILE = STATE_DIR / "state.json"
@@ -48,6 +54,7 @@ MAVLINK_CONFIG_FILE = Path(os.environ.get("YARI_MAVLINK_CONFIG_FILE", "/etc/yari
 PORTAL_SECRETS_FILE = Path(os.environ.get("YARI_PORTAL_SECRETS_FILE", "/etc/yari/device-portal-secrets.json"))
 PORTAL_CONFIG_FILE = Path(os.environ.get("YARI_PORTAL_CONFIG_FILE", "/etc/yari/device-portal.json"))
 STATIC_NETWORK_CONFIG_FILE = Path(os.environ.get("YARI_STATIC_NETWORK_CONFIG_FILE", "/etc/yari/static-network.json"))
+NETWORK_POLICY_CONFIG_FILE = Path(os.environ.get("YARI_NETWORK_POLICY_CONFIG_FILE", "/etc/yari/network-policy.json"))
 ONBOARDING_USER = os.environ.get("YARI_ONBOARDING_USER", "tortoisebot")
 MCAP_DIR = Path(os.environ.get("YARI_MCAP_DIR", "/home/tortoisebot/tortoisebot_mcap"))
 ROS_RECORDING_PID_FILE = STATE_DIR / "rosbag-record.pid"
@@ -58,8 +65,25 @@ ROS_LAUNCH_PID_FILE = STATE_DIR / "ros-launch.pid"
 ROS_LAUNCH_LOG_FILE = STATE_DIR / "ros-launch.log"
 ROS_LAUNCH_STATE_FILE = STATE_DIR / "ros-launch.json"
 VIDEO_CONFIG_FILE = Path(os.environ.get("YARI_VIDEO_CONFIG_FILE", "/etc/yari/video.json"))
+APP_MANIFEST_DIR = Path(os.environ.get("YARI_APP_MANIFEST_DIR", "/etc/yari/apps.d"))
+APP_REGISTRY_DIR = Path(os.environ.get("YARI_APP_REGISTRY_DIR", "/opt/yari/onboarding/apps/examples"))
+APP_PACKAGE_DIR = Path(os.environ.get("YARI_APP_PACKAGE_DIR", "/var/lib/yari/app-packages"))
+APP_MANIFEST_SCHEMA_VERSION = "1"
+APP_PACKAGE_EXTENSIONS = (".yariapp", ".tar.gz", ".tgz")
+APP_PACKAGE_METADATA_NAMES = {"yari-package.json", "package.json"}
+APP_REQUIRE_SIGNED_PACKAGES = os.environ.get("YARI_REQUIRE_SIGNED_APP_PACKAGES", "0") in {"1", "true", "True", "yes", "YES"}
+APP_REQUIRE_VERIFIED_PACKAGES = os.environ.get("YARI_REQUIRE_VERIFIED_APP_PACKAGES", "0") in {"1", "true", "True", "yes", "YES"}
+APP_PACKAGE_PUBLIC_KEY_FILE = Path(os.environ.get("YARI_APP_PACKAGE_PUBLIC_KEY_FILE", "/etc/yari/app-package-public.pem"))
+APP_PACKAGE_UPLOAD_MAX_BYTES = int(os.environ.get("YARI_APP_PACKAGE_UPLOAD_MAX_BYTES", str(64 * 1024 * 1024)))
 UPLOAD_QUEUE_FILE = Path(os.environ.get("YARI_UPLOAD_QUEUE_FILE", "/var/lib/yari/upload-queue.json"))
+OTA_STATE_FILE = Path(os.environ.get("YARI_OTA_STATE_FILE", "/var/lib/yari/ota-state.json"))
+OTA_CONFIG_FILE = Path(os.environ.get("YARI_OTA_CONFIG_FILE", "/etc/yari/ota.json"))
+OTA_ARTIFACT_DIR = Path(os.environ.get("YARI_OTA_ARTIFACT_DIR", "/var/lib/yari/ota-artifacts"))
 FLIGHT_LOG_DOWNLOADS_FILE = Path(os.environ.get("YARI_FLIGHT_LOG_DOWNLOADS_FILE", "/var/lib/yari/flight-log-downloads.json"))
+PORTAL_VERSION_FILE = WEB_DIR / "portal-version.json"
+PORTAL_ASSETS_FILE = WEB_DIR / "portal-assets.json"
+PORTAL_API_TOKEN = os.environ.get("YARI_PORTAL_API_TOKEN", "")
+
 SERVICE_ALLOWLIST = {
     "yari-onboarding": "yari-onboarding.service",
     "yari-agent": "yari-agent.service",
@@ -70,6 +94,96 @@ SERVICE_ALLOWLIST = {
     "yari-ros": "yari-ros.service",
     "foxglove-bridge": "foxglove-bridge.service",
 }
+
+APP_PERMISSION_PATTERN = re.compile(r"^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$")
+APP_PERMISSION_DEVICE_PREFIXES = {
+    "camera.read": ("/dev/video", "/dev/media"),
+    "serial.read-write": ("/dev/ttyACM", "/dev/ttyUSB", "/dev/ttyAMA", "/dev/serial/by-id/"),
+    "can.read-write": ("/dev/can",),
+    "gpu.access": ("/dev/dri/", "/dev/nvhost", "/dev/nvmap"),
+}
+APP_SAFE_CAPABILITIES = {"NET_ADMIN", "NET_RAW", "SYS_NICE", "SYS_TIME"}
+APP_VOLUME_OPTIONS = {"ro", "rw", "z", "Z"}
+APP_VOLUME_HOST_PREFIXES = (
+    "/var/lib/yari/apps/",
+    "/var/log/yari/apps/",
+    "/run/yari/apps/",
+)
+
+BUILTIN_APP_MANIFESTS = [
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "foxglove-bridge",
+        "name": "Foxglove Bridge",
+        "version": "core",
+        "kind": "core-service",
+        "description": "Local and remote Foxglove WebSocket access for ROS 2 topics.",
+        "services": ["foxglove-bridge"],
+        "ports": [8765],
+        "permissions": ["ros.read", "ros.write", "network.listen"],
+        "ui": {"path": ""},
+    },
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "yari-atlas-agent",
+        "name": "YARI Atlas Agent",
+        "version": "core",
+        "kind": "core-service",
+        "description": "Atlas pairing, telemetry, upload queue, and remote operations readiness.",
+        "services": ["yari-agent"],
+        "ports": [],
+        "permissions": ["atlas.pair", "logs.upload", "network.client"],
+        "ui": {"path": ""},
+    },
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "mavlink-router",
+        "name": "MAVLink Router",
+        "version": "core",
+        "kind": "core-service",
+        "description": "Serial, UDP, and TCP MAVLink routing for PX4/ArduPilot companion computers.",
+        "services": ["yari-mavlink-router", "yari-autopilot-manager"],
+        "ports": [14550],
+        "permissions": ["mavlink.read", "mavlink.write", "serial.read", "serial.write"],
+        "ui": {"path": "#autopilot"},
+    },
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "ros2-manager",
+        "name": "ROS 2 Manager",
+        "version": "core",
+        "kind": "core-service",
+        "description": "ROS 2 launch profiles, topic discovery, and MCAP recording controls.",
+        "services": ["yari-ros"],
+        "ports": [],
+        "permissions": ["ros.read", "ros.write", "storage.write"],
+        "ui": {"path": "#ros"},
+    },
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "video-manager",
+        "name": "Video Manager",
+        "version": "core",
+        "kind": "core-service",
+        "description": "Camera preview, RTSP streaming, Foxglove image topics, and Atlas WebRTC readiness.",
+        "services": ["yari-video"],
+        "ports": [8554],
+        "permissions": ["camera.read", "ros.read", "network.listen"],
+        "ui": {"path": "#video"},
+    },
+    {
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "id": "log-manager",
+        "name": "Log Manager",
+        "version": "core",
+        "kind": "core-service",
+        "description": "MCAP, flight-log, and upload-queue management.",
+        "services": ["yari-log-manager"],
+        "ports": [],
+        "permissions": ["logs.read", "logs.write", "logs.upload"],
+        "ui": {"path": "#data"},
+    },
+]
 
 
 def run(args, check=False, capture=True):
@@ -230,6 +344,67 @@ def save_pairing_tokens(atlas_token="", foxglove_token=""):
     return {"atlas_token": redact_secret(current.get("atlas_token")), "foxglove_token": redact_secret(current.get("foxglove_token"))}
 
 
+def default_device_profile():
+    return {
+        "vehicle_class": "ground_rover",
+        "autopilot_stack": "none",
+        "compute_target": "raspberry_pi",
+        "ros_domain_id": 0,
+        "notes": "",
+    }
+
+
+def read_device_profile():
+    config = read_json_file(PORTAL_CONFIG_FILE, {})
+    profile = {**default_device_profile(), **config.get("device_profile", {})}
+    if profile.get("vehicle_class") not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
+        profile["vehicle_class"] = "generic_edge"
+    if profile.get("autopilot_stack") not in {"none", "px4", "ardupilot", "ros_only", "custom"}:
+        profile["autopilot_stack"] = "custom"
+    if profile.get("compute_target") not in {"raspberry_pi", "jetson_orin", "jetson_nano", "x86_ubuntu", "custom"}:
+        profile["compute_target"] = "custom"
+    try:
+        domain = int(profile.get("ros_domain_id", 0))
+    except (TypeError, ValueError):
+        domain = 0
+    profile["ros_domain_id"] = max(0, min(domain, 232))
+    profile["notes"] = str(profile.get("notes") or "")[:500]
+    return profile
+
+
+def normalize_device_profile(payload):
+    vehicle_class = str(payload.get("vehicle_class") or "ground_rover").strip().lower()
+    autopilot_stack = str(payload.get("autopilot_stack") or "none").strip().lower()
+    compute_target = str(payload.get("compute_target") or "raspberry_pi").strip().lower()
+    if vehicle_class not in {"ground_rover", "multirotor", "fixed_wing", "vtol", "boat", "sub", "generic_edge"}:
+        raise ValueError("vehicle_class must be one of ground_rover, multirotor, fixed_wing, vtol, boat, sub, generic_edge")
+    if autopilot_stack not in {"none", "px4", "ardupilot", "ros_only", "custom"}:
+        raise ValueError("autopilot_stack must be one of none, px4, ardupilot, ros_only, custom")
+    if compute_target not in {"raspberry_pi", "jetson_orin", "jetson_nano", "x86_ubuntu", "custom"}:
+        raise ValueError("compute_target must be one of raspberry_pi, jetson_orin, jetson_nano, x86_ubuntu, custom")
+    ros_domain_id = int(payload.get("ros_domain_id", 0))
+    if ros_domain_id < 0 or ros_domain_id > 232:
+        raise ValueError("ros_domain_id must be between 0 and 232")
+    return {
+        "vehicle_class": vehicle_class,
+        "autopilot_stack": autopilot_stack,
+        "compute_target": compute_target,
+        "ros_domain_id": ros_domain_id,
+        "notes": str(payload.get("notes") or "")[:500],
+    }
+
+
+def save_device_profile(payload):
+    profile = normalize_device_profile(payload)
+    config = read_json_file(PORTAL_CONFIG_FILE, {})
+    config["device_profile"] = profile
+    config["updated"] = int(time.time())
+    PORTAL_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PORTAL_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(PORTAL_CONFIG_FILE, 0o600)
+    return {"ok": True, "profile": read_device_profile()}
+
+
 def portal_config_status():
     secrets_payload = read_json_file(PORTAL_SECRETS_FILE, {})
     return {
@@ -238,6 +413,69 @@ def portal_config_status():
         "atlas_token": redact_secret(secrets_payload.get("atlas_token")),
         "foxglove_token": redact_secret(secrets_payload.get("foxglove_token")),
     }
+
+
+def portal_assets_summary():
+    payload = read_json_file(PORTAL_ASSETS_FILE, {})
+    assets = payload.get("assets") if isinstance(payload.get("assets"), list) else []
+    gzip_assets = [asset for asset in assets if isinstance(asset, dict) and asset.get("gzip")]
+    return {
+        "available": bool(payload),
+        "generated_at": payload.get("generated_at", "unknown"),
+        "asset_count": int(payload.get("asset_count") or len(assets)),
+        "total_bytes": int(payload.get("total_bytes") or sum(int(asset.get("bytes") or 0) for asset in assets if isinstance(asset, dict))),
+        "gzip_asset_count": len(gzip_assets),
+        "gzip_total_bytes": sum(int(asset.get("bytes") or 0) for asset in gzip_assets if isinstance(asset, dict)),
+        "manifest": str(PORTAL_ASSETS_FILE),
+    }
+
+
+def portal_version():
+    payload = read_json_file(PORTAL_VERSION_FILE, {})
+    return {
+        "name": payload.get("name", "yari-os-device-portal"),
+        "version": payload.get("version", "legacy"),
+        "build_time": payload.get("build_time", "unknown"),
+        "git_commit": payload.get("git_commit", "unknown"),
+        "frontend_stack": payload.get("frontend_stack", "legacy-static-html"),
+        "api_token_required": bool(portal_api_token()),
+        "assets": portal_assets_summary(),
+    }
+
+
+def portal_api_token():
+    return str(os.environ.get("YARI_PORTAL_API_TOKEN", PORTAL_API_TOKEN) or "").strip()
+
+
+def header_value(headers, *names):
+    for name in names:
+        value = headers.get(name)
+        if value is not None:
+            return value
+        value = headers.get(name.lower())
+        if value is not None:
+            return value
+        value = headers.get(name.title())
+        if value is not None:
+            return value
+    return ""
+
+
+def bearer_token(value):
+    value = str(value or "").strip()
+    if value.lower().startswith("bearer "):
+        return value[7:].strip()
+    return ""
+
+
+def request_authorized(headers):
+    expected = portal_api_token()
+    if not expected:
+        return True
+    supplied = str(header_value(headers, "x-yari-token") or "").strip()
+    if not supplied:
+        supplied = bearer_token(header_value(headers, "authorization"))
+    return bool(supplied) and secrets.compare_digest(supplied, expected)
 
 
 def command_output(args, timeout=8):
@@ -548,6 +786,46 @@ def save_static_ip_config(payload):
     return {"ok": True, "static_ip": read_static_ip_config(), "applied": bool(has_command("nmcli") and APPLY_NETWORK)}
 
 
+def default_network_policy():
+    return {
+        "fallback_ap_enabled": True,
+        "fallback_timeout_sec": CONNECTIVITY_TIMEOUT,
+        "maintenance_ap_enabled": False,
+        "serve_portal_on_client_network": True,
+    }
+
+
+def read_network_policy():
+    config = {**default_network_policy(), **read_json_file(NETWORK_POLICY_CONFIG_FILE, {})}
+    try:
+        timeout = int(config.get("fallback_timeout_sec", CONNECTIVITY_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = CONNECTIVITY_TIMEOUT
+    config["fallback_timeout_sec"] = max(5, min(timeout, 600))
+    config["fallback_ap_enabled"] = bool(config.get("fallback_ap_enabled", True))
+    config["maintenance_ap_enabled"] = bool(config.get("maintenance_ap_enabled", False))
+    config["serve_portal_on_client_network"] = bool(config.get("serve_portal_on_client_network", True))
+    config["config_file"] = str(NETWORK_POLICY_CONFIG_FILE)
+    return config
+
+
+def save_network_policy(payload):
+    timeout = int(payload.get("fallback_timeout_sec", CONNECTIVITY_TIMEOUT))
+    if timeout < 5 or timeout > 600:
+        raise ValueError("fallback_timeout_sec must be between 5 and 600")
+    config = {
+        "fallback_ap_enabled": parse_bool(payload.get("fallback_ap_enabled", True)),
+        "fallback_timeout_sec": timeout,
+        "maintenance_ap_enabled": parse_bool(payload.get("maintenance_ap_enabled", False)),
+        "serve_portal_on_client_network": parse_bool(payload.get("serve_portal_on_client_network", True)),
+        "updated": int(time.time()),
+    }
+    NETWORK_POLICY_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NETWORK_POLICY_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(NETWORK_POLICY_CONFIG_FILE, 0o600)
+    return {"ok": True, "policy": read_network_policy()}
+
+
 def configure_wifi(ssid, password, hostname=""):
     ssid = normalize_form_value(ssid)
     password = normalize_form_value(password)
@@ -590,6 +868,10 @@ def save_setup_config(payload):
     tokens = save_pairing_tokens(payload.get("atlas_token", ""), payload.get("foxglove_token", ""))
     config = read_json_file(PORTAL_CONFIG_FILE, {})
     config.update({"hostname": hostname, "updated": int(time.time())})
+    profile_payload = payload.get("device_profile") if isinstance(payload.get("device_profile"), dict) else payload
+    profile_keys = {"vehicle_class", "autopilot_stack", "compute_target", "ros_domain_id", "notes"}
+    if any(key in profile_payload for key in profile_keys):
+        config["device_profile"] = normalize_device_profile(profile_payload)
     if payload.get("atlas_url"):
         config["atlas_url"] = normalize_form_value(str(payload.get("atlas_url")))
     if payload.get("atlas_upload_url"):
@@ -676,6 +958,8 @@ def device_status():
         "ip_addresses": command_output(["hostname", "-I"])["stdout"].split(),
         "storage": parse_lsblk_json(),
         "onboarding": read_state(),
+        "portal": portal_version(),
+        "profile": read_device_profile(),
     }
 
 
@@ -873,6 +1157,885 @@ def service_logs(name, lines=120):
     lines = max(1, min(int(lines), 500))
     result = command_output(["journalctl", "-u", unit, "-n", str(lines), "--no-pager"], timeout=10)
     return {"ok": result["ok"], "name": name, "unit": unit, "logs": result["stdout"], "error": result["stderr"]}
+
+
+def validate_app_device_path(device, permissions):
+    device = str(device or "").strip()
+    if not device or "\n" in device or "\r" in device or not device.startswith("/dev/"):
+        raise ValueError(f"Invalid app device '{device}'")
+    for permission, prefixes in APP_PERMISSION_DEVICE_PREFIXES.items():
+        if permission in permissions and any(device == prefix or device.startswith(prefix) for prefix in prefixes):
+            return device
+    raise ValueError(f"App device '{device}' requires a matching device permission")
+
+
+def parse_app_volume(volume):
+    value = str(volume or "").strip()
+    if not value or "\n" in value or "\r" in value:
+        raise ValueError(f"Invalid app volume '{value}'")
+    parts = value.split(":")
+    if len(parts) not in {2, 3}:
+        raise ValueError(f"Invalid app volume '{value}'")
+    host_path, container_path = parts[0], parts[1]
+    options = parts[2].split(",") if len(parts) == 3 and parts[2] else []
+    if not host_path.startswith("/") or not container_path.startswith("/"):
+        raise ValueError(f"Invalid app volume '{value}'")
+    if any(option not in APP_VOLUME_OPTIONS for option in options):
+        raise ValueError(f"Invalid app volume option in '{value}'")
+    return host_path, container_path, options
+
+
+def validate_app_volume(volume, app_id, permissions, runtime):
+    value = str(volume or "").strip()
+    if not value or "\n" in value or "\r" in value:
+        raise ValueError(f"Invalid app volume '{value}'")
+    if runtime != "container":
+        return value
+    host_path, _, _ = parse_app_volume(value)
+    allowed_prefixes = tuple(f"{prefix}{app_id}/" for prefix in APP_VOLUME_HOST_PREFIXES)
+    if "storage.persistent" not in permissions:
+        raise ValueError(f"App volume '{value}' requires storage.persistent permission")
+    if not any(host_path == prefix[:-1] or host_path.startswith(prefix) for prefix in allowed_prefixes):
+        raise ValueError(f"App volume '{value}' must be under a YARI app data directory")
+    return value
+
+
+def validate_container_runtime_options(app_id, runtime, container, permissions):
+    network = str(container.get("network") or "bridge")
+    if network not in {"bridge", "host", "none"}:
+        raise ValueError(f"Invalid container network '{network}'")
+    if runtime == "container" and network == "host" and "network.host" not in permissions:
+        raise ValueError(f"Container app '{app_id}' requires network.host permission for host networking")
+    capabilities = []
+    for item in container.get("capabilities", []):
+        capability = str(item).strip().upper()
+        if not capability:
+            continue
+        if capability not in APP_SAFE_CAPABILITIES:
+            raise ValueError(f"Unsupported container capability '{capability}'")
+        if "system.capabilities" not in permissions:
+            raise ValueError(f"Container app '{app_id}' requires system.capabilities permission")
+        capabilities.append(capability)
+    privileged = bool(container.get("privileged", False))
+    if runtime == "container" and privileged and "system.privileged" not in permissions:
+        raise ValueError(f"Container app '{app_id}' requires system.privileged permission")
+    return network, privileged, capabilities
+
+
+def normalize_app_manifest(manifest, source="builtin"):
+    if not isinstance(manifest, dict):
+        raise ValueError("App manifest must be a JSON object")
+    schema_version = str(manifest.get("schema_version") or APP_MANIFEST_SCHEMA_VERSION)
+    if schema_version != APP_MANIFEST_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported app manifest schema_version '{schema_version}'")
+    app_id = str(manifest.get("id") or "").strip()
+    if not re.match(r"^[a-z0-9][a-z0-9_.-]{1,63}$", app_id):
+        raise ValueError(f"Invalid app id '{app_id}'")
+    runtime = str(manifest.get("runtime") or manifest.get("kind") or "service-bundle")
+    if runtime not in {"core-service", "service-bundle", "container"}:
+        raise ValueError(f"Unsupported app runtime '{runtime}'")
+    services = []
+    for item in manifest.get("services", []):
+        service = str(item).strip()
+        if not service:
+            continue
+        if service not in SERVICE_ALLOWLIST and not re.match(r"^[A-Za-z0-9_.@-]+\.service$", service):
+            raise ValueError(f"Invalid app service '{service}'")
+        services.append(service)
+    if runtime in {"core-service", "service-bundle"} and not services:
+        raise ValueError(f"App runtime '{runtime}' requires at least one service")
+    container = manifest.get("container") if isinstance(manifest.get("container"), dict) else {}
+    if runtime == "container" and not str(container.get("image") or "").strip():
+        raise ValueError("Container app manifests require container.image")
+    ports = []
+    for port in manifest.get("ports", []):
+        if isinstance(port, dict):
+            value = int(port.get("container"))
+            host = port.get("host")
+            if host is not None:
+                host = int(host)
+                if host < 1 or host > 65535:
+                    raise ValueError(f"Invalid app host port '{port}'")
+            protocol = str(port.get("protocol") or "tcp").lower()
+            if protocol not in {"tcp", "udp"}:
+                raise ValueError(f"Invalid app port protocol '{protocol}'")
+            normalized_port = {"container": value, "protocol": protocol}
+            if host is not None:
+                normalized_port["host"] = host
+            if port.get("description"):
+                normalized_port["description"] = str(port.get("description"))
+        else:
+            value = int(port)
+            normalized_port = value
+        if value < 1 or value > 65535:
+            raise ValueError(f"Invalid app port '{port}'")
+        ports.append(normalized_port)
+    permissions = []
+    for item in manifest.get("permissions", []):
+        permission = str(item).strip()
+        if not permission:
+            continue
+        if not APP_PERMISSION_PATTERN.match(permission):
+            raise ValueError(f"Invalid app permission '{permission}'")
+        if permission not in permissions:
+            permissions.append(permission)
+    ui = manifest.get("ui") if isinstance(manifest.get("ui"), dict) else {}
+    network, privileged, capabilities = validate_container_runtime_options(app_id, runtime, container, permissions)
+    environment = {}
+    if isinstance(container.get("environment"), dict):
+        for key, value in container.get("environment", {}).items():
+            env_key = str(key)
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", env_key):
+                raise ValueError(f"Invalid container environment variable '{env_key}'")
+            environment[env_key] = str(value)
+    devices = [validate_app_device_path(item, permissions) for item in manifest.get("devices", []) if str(item).strip()]
+    volumes = [validate_app_volume(item, app_id, permissions, runtime) for item in manifest.get("volumes", []) if str(item).strip()]
+
+    return {
+        "schema_version": schema_version,
+        "id": app_id,
+        "name": str(manifest.get("name") or app_id),
+        "version": str(manifest.get("version") or "unknown"),
+        "kind": runtime,
+        "runtime": runtime,
+        "description": str(manifest.get("description") or ""),
+        "services": services,
+        "ports": ports,
+        "permissions": permissions,
+        "devices": devices,
+        "volumes": volumes,
+        "healthcheck": manifest.get("healthcheck", {}) if isinstance(manifest.get("healthcheck", {}), dict) else {},
+        "container": {
+            "image": str(container.get("image") or ""),
+            "network": network,
+            "privileged": privileged,
+            "capabilities": capabilities,
+            "environment": environment,
+        },
+        "ui": {"path": str(ui.get("path") or "")},
+        "source": source,
+    }
+
+
+def app_service_statuses(app):
+    statuses = []
+    for name in app.get("services", []):
+        if name in SERVICE_ALLOWLIST:
+            statuses.append(service_status(name))
+        elif name.endswith(".service"):
+            statuses.append(service_status(name.removesuffix(".service"), name))
+        else:
+            statuses.append({"name": name, "unit": name, "active": "unknown", "enabled": "unknown", "available": False})
+    return statuses
+
+
+def app_health_from_services(statuses):
+    if not statuses:
+        return "not-managed"
+    active = [status.get("active") for status in statuses]
+    if all(value == "active" for value in active):
+        return "running"
+    if any(value == "active" for value in active):
+        return "partial"
+    if any(value in {"failed", "activating", "deactivating"} for value in active):
+        return "attention"
+    return "stopped"
+
+
+def container_runtime_status():
+    for binary in ("podman", "docker"):
+        if has_command(binary):
+            version = command_output([binary, "--version"], timeout=5)
+            return {"available": True, "runtime": binary, "name": binary, "version": version.get("stdout", ""), "error": version.get("stderr", "")}
+    return {"available": False, "runtime": "", "name": "", "version": "", "error": "Docker or Podman is not installed"}
+
+
+def app_container_name(app_id):
+    if not re.match(r"^[a-z0-9][a-z0-9_.-]{1,63}$", app_id):
+        raise ValueError(f"Invalid app id '{app_id}'")
+    return "yari-" + re.sub(r"[^a-zA-Z0-9_.-]", "-", app_id)
+
+
+def container_status(app):
+    if app.get("runtime") != "container":
+        return {"managed": False}
+    runtime = container_runtime_status()
+    name = app_container_name(app["id"])
+    status = {"managed": True, "name": name, "runtime": runtime, "active": "unknown"}
+    if not runtime["available"]:
+        status["active"] = "runtime-missing"
+        return status
+    result = command_output([runtime["runtime"], "inspect", "--format", "{{.State.Status}}", name], timeout=8)
+    status["active"] = result["stdout"] if result["ok"] and result["stdout"] else "not-created"
+    status["error"] = result["stderr"]
+    return status
+
+
+def container_health(status):
+    active = status.get("active")
+    if active == "running":
+        return "running"
+    if active in {"runtime-missing", "unknown"}:
+        return "attention"
+    return "stopped"
+
+
+def app_healthcheck_status(app):
+    healthcheck = app.get("healthcheck") if isinstance(app.get("healthcheck"), dict) else {}
+    check_type = str(healthcheck.get("type") or "").strip().lower()
+    if not check_type:
+        return {"configured": False, "ok": None, "state": "not-configured"}
+    if check_type == "service":
+        service = str(healthcheck.get("service") or "").strip()
+        if not service:
+            return {"configured": True, "ok": False, "state": "invalid", "error": "service healthcheck requires service"}
+        for status in app_service_statuses({"services": [service]}):
+            ok = status.get("active") == "active"
+            return {"configured": True, "ok": ok, "state": "passing" if ok else "failing", "service": service, "status": status}
+    if check_type == "tcp":
+        host = str(healthcheck.get("host") or "127.0.0.1")
+        port = int(healthcheck.get("port") or 0)
+        timeout = max(1, min(int(healthcheck.get("timeout_sec") or 2), 10))
+        if port < 1 or port > 65535:
+            return {"configured": True, "ok": False, "state": "invalid", "error": "tcp healthcheck requires port 1-65535"}
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return {"configured": True, "ok": True, "state": "passing", "type": "tcp", "host": host, "port": port}
+        except OSError as exc:
+            return {"configured": True, "ok": False, "state": "failing", "type": "tcp", "host": host, "port": port, "error": str(exc)}
+    if check_type == "http":
+        url = str(healthcheck.get("url") or "")
+        timeout = max(1, min(int(healthcheck.get("timeout_sec") or 3), 10))
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return {"configured": True, "ok": False, "state": "invalid", "error": "http healthcheck requires http(s) url"}
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        connection_class = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        try:
+            connection = connection_class(parsed.hostname, parsed.port, timeout=timeout)
+            try:
+                connection.request("GET", path)
+                response = connection.getresponse()
+                ok = 200 <= response.status < 400
+                return {"configured": True, "ok": ok, "state": "passing" if ok else "failing", "type": "http", "url": url, "status": response.status}
+            finally:
+                connection.close()
+        except OSError as exc:
+            return {"configured": True, "ok": False, "state": "failing", "type": "http", "url": url, "error": str(exc)}
+    return {"configured": True, "ok": False, "state": "unsupported", "error": f"Unsupported healthcheck type '{check_type}'"}
+
+
+def combine_app_health(base_health, healthcheck):
+    if not healthcheck.get("configured"):
+        return base_health
+    if healthcheck.get("ok") is True:
+        return "running" if base_health in {"running", "not-managed"} else base_health
+    return "attention"
+
+
+def app_manifest_digest(app):
+    derived_fields = {
+        "source",
+        "installed",
+        "installed_source",
+        "installed_version",
+        "registry_source",
+        "service_status",
+        "container_status",
+        "healthcheck_status",
+        "health",
+        "actions",
+        "update",
+    }
+    comparable = {key: value for key, value in app.items() if key not in derived_fields}
+    payload = json.dumps(comparable, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def app_update_metadata(app, registry_app=None):
+    metadata = {
+        "manifest_digest": app_manifest_digest(app),
+        "registry_version": "",
+        "registry_digest": "",
+        "update_available": False,
+    }
+    if registry_app:
+        registry_digest = app_manifest_digest(registry_app)
+        metadata.update({
+            "registry_version": registry_app.get("version", ""),
+            "registry_digest": registry_digest,
+            "update_available": registry_digest != metadata["manifest_digest"],
+        })
+    return metadata
+
+
+def raw_app_manifests():
+    apps = []
+    errors = []
+    seen = set()
+    for manifest in BUILTIN_APP_MANIFESTS:
+        app = normalize_app_manifest(manifest, "builtin")
+        seen.add(app["id"])
+        apps.append(app)
+    if APP_MANIFEST_DIR.exists():
+        for path in sorted(APP_MANIFEST_DIR.glob("*.json")):
+            try:
+                app = normalize_app_manifest(json.loads(path.read_text()), str(path))
+                if app["id"] in seen:
+                    errors.append({"source": str(path), "error": f"duplicate app id '{app['id']}'"})
+                    continue
+                seen.add(app["id"])
+                apps.append(app)
+            except Exception as exc:
+                errors.append({"source": str(path), "error": str(exc)})
+    return apps, errors
+
+
+def enrich_app(app, registry_app=None):
+    app = dict(app)
+    external = app.get("source") != "builtin"
+    app["update"] = app_update_metadata(app, registry_app)
+    app["service_status"] = app_service_statuses(app)
+    app["container_status"] = container_status(app)
+    if app.get("runtime") == "container":
+        base_health = container_health(app["container_status"])
+        can_run = app["container_status"].get("runtime", {}).get("available", False)
+    else:
+        base_health = app_health_from_services(app["service_status"])
+        can_run = bool(app["service_status"])
+    app["healthcheck_status"] = app_healthcheck_status(app)
+    app["health"] = combine_app_health(base_health, app["healthcheck_status"])
+    app["installed"] = True
+    app["actions"] = {
+        "install": False,
+        "uninstall": external,
+        "start": can_run,
+        "stop": can_run,
+        "restart": can_run,
+        "logs": bool(app["service_status"]) or (app.get("runtime") == "container" and can_run),
+        "update": external,
+    }
+    return app
+
+
+def recommended_apps_for_profile(profile=None):
+    profile = profile or read_device_profile()
+    vehicle_class = profile.get("vehicle_class", "ground_rover")
+    autopilot_stack = profile.get("autopilot_stack", "none")
+    base = [
+        {"id": "yari-atlas-agent", "reason": "Atlas telemetry, pairing, uploads, and remote operations."},
+        {"id": "log-manager", "reason": "MCAP, service, and vehicle log collection."},
+    ]
+    if vehicle_class in {"ground_rover", "generic_edge"} or autopilot_stack in {"none", "ros_only"}:
+        base.extend([
+            {"id": "ros2-manager", "reason": "ROS 2 launch, topic discovery, and MCAP recording."},
+            {"id": "video-manager", "reason": "Camera preview, Foxglove image readiness, and streaming settings."},
+            {"id": "foxglove-bridge", "reason": "Live visualization and teleop through Foxglove."},
+        ])
+    if autopilot_stack in {"px4", "ardupilot"} or vehicle_class in {"multirotor", "fixed_wing", "vtol", "boat", "sub"}:
+        base.extend([
+            {"id": "mavlink-router", "reason": "PX4/ArduPilot MAVLink routing and autopilot status."},
+            {"id": "video-manager", "reason": "Low-latency camera streams for remote piloting and inspection."},
+            {"id": "foxglove-bridge", "reason": "Live MAVLink/ROS visualization during integration and debugging."},
+        ])
+    seen = set()
+    recommendations = []
+    for item in base:
+        if item["id"] in seen:
+            continue
+        seen.add(item["id"])
+        recommendations.append(item)
+    return recommendations
+
+
+def registry_apps_by_id():
+    registry = {}
+    if APP_REGISTRY_DIR.exists():
+        for path in sorted(APP_REGISTRY_DIR.glob("*.json")):
+            try:
+                app = normalize_app_manifest(json.loads(path.read_text()), str(path))
+                registry[app["id"]] = app
+            except Exception:
+                continue
+    return registry
+
+
+def app_catalog():
+    apps, errors = raw_app_manifests()
+    registry_by_id = registry_apps_by_id()
+    enriched = [enrich_app(app, registry_by_id.get(app["id"])) for app in apps]
+    app_ids = {app["id"] for app in enriched}
+    recommendations = []
+    for item in recommended_apps_for_profile():
+        recommendations.append({**item, "installed": item["id"] in app_ids})
+    return {
+        "apps": enriched,
+        "errors": errors,
+        "manifest_dir": str(APP_MANIFEST_DIR),
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "container_runtime": container_runtime_status(),
+        "device_profile": read_device_profile(),
+        "recommendations": recommendations,
+    }
+
+
+def app_registry():
+    apps = []
+    errors = []
+    installed_apps, installed_errors = raw_app_manifests()
+    installed_by_id = {app["id"]: app for app in installed_apps}
+    if APP_REGISTRY_DIR.exists():
+        for path in sorted(APP_REGISTRY_DIR.glob("*.json")):
+            try:
+                app = normalize_app_manifest(json.loads(path.read_text()), str(path))
+                installed = installed_by_id.get(app["id"])
+                app["installed"] = installed is not None
+                app["installed_version"] = installed.get("version", "") if installed else ""
+                app["installed_source"] = installed.get("source", "") if installed else ""
+                app["update"] = app_update_metadata(installed, app) if installed else {
+                    "manifest_digest": "",
+                    "registry_version": app.get("version", ""),
+                    "registry_digest": app_manifest_digest(app),
+                    "update_available": False,
+                }
+                app["registry_source"] = "local"
+                apps.append(app)
+            except Exception as exc:
+                errors.append({"source": str(path), "error": str(exc)})
+    installed_ids = {app["id"] for app in installed_apps}
+    return {
+        "apps": apps,
+        "errors": errors,
+        "registry_dir": str(APP_REGISTRY_DIR),
+        "schema_version": APP_MANIFEST_SCHEMA_VERSION,
+        "installed_ids": sorted(installed_ids),
+    }
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_app_package_path(path):
+    name = path.name
+    return any(name.endswith(extension) for extension in APP_PACKAGE_EXTENSIONS)
+
+
+def safe_package_name(name):
+    name = str(name or "").strip()
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise ValueError(f"Invalid app package '{name}'")
+    if not any(name.endswith(extension) for extension in APP_PACKAGE_EXTENSIONS):
+        raise ValueError(f"Unsupported app package '{name}'")
+    return name
+
+
+def package_path(name):
+    name = safe_package_name(name)
+    path = APP_PACKAGE_DIR / name
+    try:
+        path.resolve().relative_to(APP_PACKAGE_DIR.resolve())
+    except ValueError as exc:
+        raise ValueError(f"App package '{name}' is outside {APP_PACKAGE_DIR}") from exc
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"App package '{name}' not found")
+    return path
+
+
+def safe_tar_member_name(name):
+    item = Path(str(name or ""))
+    if item.is_absolute() or ".." in item.parts:
+        raise ValueError(f"Package member path '{name}' is unsafe")
+    return str(name)
+
+
+def read_tar_json_member(archive, member):
+    safe_tar_member_name(member.name)
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise ValueError(f"Package member '{member.name}' cannot be read")
+    return extracted.read()
+
+
+def find_package_member(members, names):
+    direct = next((member for member in members if member.name in names), None)
+    if direct is not None:
+        return direct
+    return next((member for member in members if any(member.name.endswith("/" + name) for name in names)), None)
+
+
+def verify_app_package_signature(manifest_bytes, signature):
+    if not APP_PACKAGE_PUBLIC_KEY_FILE.exists():
+        return False, "public-key-missing"
+    if not has_command("openssl"):
+        return False, "openssl-missing"
+    try:
+        signature_bytes = base64.b64decode(signature, validate=True)
+    except (binascii.Error, ValueError):
+        return False, "invalid-signature-encoding"
+    with tempfile.TemporaryDirectory(prefix="yari-app-signature-") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        manifest_path = tmpdir_path / "manifest.json"
+        signature_path = tmpdir_path / "manifest.sig"
+        manifest_path.write_bytes(manifest_bytes)
+        signature_path.write_bytes(signature_bytes)
+        try:
+            command_output([
+                "openssl",
+                "dgst",
+                "-sha256",
+                "-verify",
+                str(APP_PACKAGE_PUBLIC_KEY_FILE),
+                "-signature",
+                str(signature_path),
+                str(manifest_path),
+            ], timeout=20)
+        except RuntimeError:
+            return False, "verification-failed"
+    return True, "verified"
+
+
+def package_signature_status(metadata, manifest_bytes=None):
+    signature = str(metadata.get("signature") or "").strip()
+    signer = str(metadata.get("signed_by") or metadata.get("signer") or "").strip()
+    signature_type = str(metadata.get("signature_type") or metadata.get("algorithm") or "").strip()
+    present = bool(signature or signer or signature_type)
+    verified = False
+    status = "present-not-verified" if present else "missing"
+    if present and signature and manifest_bytes is not None:
+        verified, status = verify_app_package_signature(manifest_bytes, signature)
+    if APP_REQUIRE_SIGNED_PACKAGES and not present:
+        status = "required-missing"
+    if APP_REQUIRE_VERIFIED_PACKAGES and present and not verified:
+        status = "required-not-verified" if status == "present-not-verified" else status
+    return {
+        "required": APP_REQUIRE_SIGNED_PACKAGES,
+        "verification_required": APP_REQUIRE_VERIFIED_PACKAGES,
+        "public_key_file": str(APP_PACKAGE_PUBLIC_KEY_FILE),
+        "present": present,
+        "verified": verified,
+        "status": status,
+        "signed_by": signer,
+        "signature_type": signature_type,
+    }
+
+
+def read_app_package(path):
+    metadata = {}
+    try:
+        with tarfile.open(path, "r:*") as archive:
+            members = [member for member in archive.getmembers() if member.isfile()]
+            manifest_member = find_package_member(members, {"manifest.json", "app.json"})
+            if manifest_member is None:
+                raise ValueError("Package does not contain manifest.json")
+            manifest_bytes = read_tar_json_member(archive, manifest_member)
+            manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+            metadata_member = find_package_member(members, APP_PACKAGE_METADATA_NAMES)
+            if metadata_member is not None:
+                metadata_bytes = read_tar_json_member(archive, metadata_member)
+                metadata = json.loads(metadata_bytes.decode("utf-8"))
+            if not isinstance(metadata, dict):
+                raise ValueError("Package metadata must be a JSON object")
+            declared_manifest_sha256 = str(metadata.get("manifest_sha256") or "").strip().lower()
+            if declared_manifest_sha256 and declared_manifest_sha256 != manifest_sha256:
+                raise ValueError("Package manifest_sha256 does not match embedded manifest")
+            manifest = json.loads(manifest_bytes.decode("utf-8"))
+    except tarfile.TarError as exc:
+        raise ValueError(f"Invalid app package archive: {exc}") from exc
+    app = normalize_app_manifest(manifest, str(path))
+    signature = package_signature_status(metadata, manifest_bytes)
+    if APP_REQUIRE_SIGNED_PACKAGES and not signature["present"]:
+        raise ValueError("App package signature is required")
+    if APP_REQUIRE_VERIFIED_PACKAGES and not signature["verified"]:
+        raise ValueError(f"App package signature verification failed: {signature['status']}")
+    return {
+        "app": app,
+        "metadata": metadata,
+        "manifest_sha256": manifest_sha256,
+        "signature": signature,
+    }
+
+
+def read_app_package_manifest(path):
+    return read_app_package(path)["app"]
+
+
+def app_packages():
+    packages = []
+    errors = []
+    installed_by_id = {app["id"]: app for app in raw_app_manifests()[0]}
+    if APP_PACKAGE_DIR.exists():
+        for path in sorted(item for item in APP_PACKAGE_DIR.iterdir() if item.is_file() and is_app_package_path(item)):
+            try:
+                package = read_app_package(path)
+                app = package["app"]
+                installed = installed_by_id.get(app["id"])
+                stat = path.stat()
+                packages.append({
+                    "name": path.name,
+                    "path": str(path),
+                    "bytes": stat.st_size,
+                    "modified": int(stat.st_mtime),
+                    "sha256": file_sha256(path),
+                    "manifest_sha256": package["manifest_sha256"],
+                    "metadata": package["metadata"],
+                    "signature": package["signature"],
+                    "app": app,
+                    "installed": installed is not None,
+                    "installed_version": installed.get("version", "") if installed else "",
+                    "update": app_update_metadata(installed, app) if installed else {
+                        "manifest_digest": "",
+                        "registry_version": app.get("version", ""),
+                        "registry_digest": app_manifest_digest(app),
+                        "update_available": False,
+                    },
+                })
+            except Exception as exc:
+                errors.append({"path": str(path), "error": str(exc)})
+    return {
+        "packages": packages,
+        "errors": errors,
+        "package_dir": str(APP_PACKAGE_DIR),
+        "supported_extensions": list(APP_PACKAGE_EXTENSIONS),
+        "signature_required": APP_REQUIRE_SIGNED_PACKAGES,
+        "signature_verification_required": APP_REQUIRE_VERIFIED_PACKAGES,
+        "signature_public_key_file": str(APP_PACKAGE_PUBLIC_KEY_FILE),
+    }
+
+
+def install_app_package(name, replace=False):
+    path = package_path(name)
+    package = read_app_package(path)
+    app = package["app"]
+    return install_app_manifest({
+        "manifest": app,
+        "replace": replace,
+        "package": {
+            "name": path.name,
+            "sha256": file_sha256(path),
+            "manifest_sha256": package["manifest_sha256"],
+            "signature": package["signature"],
+        },
+    })
+
+
+def upload_app_package(payload):
+    name = safe_package_name(str(payload.get("name") or payload.get("filename") or ""))
+    replace = payload.get("replace", False) in {True, "true", "on", "1", 1}
+    content_base64 = str(payload.get("content_base64") or payload.get("data") or "")
+    if not content_base64:
+        raise ValueError("Package upload content_base64 is required")
+    if "," in content_base64 and content_base64.split(",", 1)[0].startswith("data:"):
+        content_base64 = content_base64.split(",", 1)[1]
+    try:
+        content = base64.b64decode(content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Package upload content_base64 is invalid") from exc
+    if not content:
+        raise ValueError("Package upload is empty")
+    if len(content) > APP_PACKAGE_UPLOAD_MAX_BYTES:
+        raise ValueError(f"Package upload exceeds {APP_PACKAGE_UPLOAD_MAX_BYTES} bytes")
+    APP_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
+    target = APP_PACKAGE_DIR / name
+    try:
+        target.resolve().relative_to(APP_PACKAGE_DIR.resolve())
+    except ValueError as exc:
+        raise ValueError(f"App package '{name}' is outside {APP_PACKAGE_DIR}") from exc
+    if target.exists() and not replace:
+        raise ValueError(f"App package '{name}' already exists")
+    tmp = target.with_suffix(target.suffix + ".uploading")
+    tmp.write_bytes(content)
+    try:
+        package = read_app_package(tmp)
+        tmp.replace(target)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return {
+        "ok": True,
+        "package": {
+            "name": target.name,
+            "bytes": len(content),
+            "sha256": file_sha256(target),
+            "manifest_sha256": package["manifest_sha256"],
+            "signature": package["signature"],
+            "app": package["app"],
+        },
+    }
+
+
+def delete_app_package(name):
+    path = package_path(name)
+    path.unlink()
+    return {"ok": True, "deleted": path.name}
+
+
+def registry_app_manifest(app_id):
+    if not re.match(r"^[a-z0-9][a-z0-9_.-]{1,63}$", app_id):
+        raise ValueError(f"Invalid app id '{app_id}'")
+    registry = app_registry()
+    for app in registry["apps"]:
+        if app["id"] == app_id:
+            source = Path(app["source"])
+            return json.loads(source.read_text())
+    raise ValueError(f"Registry app '{app_id}' not found")
+
+
+def install_registry_app(app_id, replace=False):
+    return install_app_manifest({"manifest": registry_app_manifest(app_id), "replace": replace})
+
+
+def app_by_id(app_id):
+    for app in raw_app_manifests()[0]:
+        if app["id"] == app_id:
+            return app
+    raise ValueError(f"Unsupported app '{app_id}'")
+
+
+def app_manifest_path(app_id):
+    if not re.match(r"^[a-z0-9][a-z0-9_.-]{1,63}$", app_id):
+        raise ValueError(f"Invalid app id '{app_id}'")
+    return APP_MANIFEST_DIR / f"{app_id}.json"
+
+
+def install_app_manifest(payload):
+    manifest = payload.get("manifest") if isinstance(payload, dict) and isinstance(payload.get("manifest"), dict) else payload
+    replace = bool(payload.get("replace", False)) if isinstance(payload, dict) else False
+    app = normalize_app_manifest(manifest, "pending")
+    existing_apps, _ = raw_app_manifests()
+    existing = next((item for item in existing_apps if item["id"] == app["id"]), None)
+    if existing and existing.get("source") == "builtin":
+        raise ValueError(f"Cannot replace built-in app '{app['id']}'")
+    if existing and not replace:
+        raise ValueError(f"App '{app['id']}' already exists; set replace=true to update it")
+    APP_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    target = app_manifest_path(app["id"])
+    persisted_keys = {"schema_version", "id", "name", "version", "runtime", "kind", "description", "services", "ports", "permissions", "devices", "volumes", "healthcheck", "container", "ui", "update"}
+    persisted = {key: value for key, value in manifest.items() if key in persisted_keys}
+    persisted["schema_version"] = APP_MANIFEST_SCHEMA_VERSION
+    persisted["id"] = app["id"]
+    persisted["runtime"] = app["runtime"]
+    target.write_text(json.dumps(persisted, indent=2, sort_keys=True) + "\n")
+    os.chmod(target, 0o644)
+    installed = normalize_app_manifest(json.loads(target.read_text()), str(target))
+    result = {"ok": True, "app": enrich_app(installed), "path": str(target), "catalog": app_catalog()}
+    if isinstance(payload, dict) and isinstance(payload.get("package"), dict):
+        result["package"] = payload["package"]
+    return result
+
+
+def uninstall_app_manifest(app_id):
+    app = app_by_id(app_id)
+    if app.get("source") == "builtin":
+        raise ValueError(f"Cannot uninstall built-in app '{app_id}'")
+    source = Path(app.get("source", ""))
+    try:
+        source.relative_to(APP_MANIFEST_DIR)
+    except ValueError as exc:
+        raise ValueError(f"App manifest is outside {APP_MANIFEST_DIR}") from exc
+    if source.exists():
+        source.unlink()
+    return {"ok": True, "removed": app_id, "path": str(source), "catalog": app_catalog()}
+
+
+def app_service_unit(service):
+    if service in SERVICE_ALLOWLIST:
+        return SERVICE_ALLOWLIST[service]
+    if service.endswith(".service") and re.match(r"^[A-Za-z0-9_.@-]+\.service$", service):
+        return service
+    raise ValueError(f"Unsupported app service '{service}'")
+
+
+def container_run_command(runtime, app):
+    container = app.get("container", {})
+    image = container.get("image", "")
+    if not image:
+        raise ValueError(f"Container app '{app['id']}' has no image")
+    name = app_container_name(app["id"])
+    command = [runtime, "run", "-d", "--name", name, "--restart", "unless-stopped"]
+    network = container.get("network") or "bridge"
+    if network in {"host", "none"}:
+        command.extend(["--network", network])
+    for port in app.get("ports", []):
+        if isinstance(port, dict) and network != "host":
+            protocol = port.get("protocol", "tcp")
+            target = f"{port.get('host', port.get('container'))}:{port.get('container')}/{protocol}"
+            command.extend(["-p", target])
+    for device in app.get("devices", []):
+        command.extend(["--device", device])
+    for volume in app.get("volumes", []):
+        command.extend(["-v", volume])
+    for key, value in container.get("environment", {}).items():
+        command.extend(["-e", f"{key}={value}"])
+    for capability in container.get("capabilities", []):
+        command.extend(["--cap-add", capability])
+    if container.get("privileged"):
+        command.append("--privileged")
+    command.append(image)
+    return command
+
+
+def container_app_action(app, action):
+    runtime = container_runtime_status()
+    if not runtime["available"]:
+        raise ValueError(runtime["error"])
+    binary = runtime["runtime"]
+    name = app_container_name(app["id"])
+    results = []
+    if action in {"stop", "restart"}:
+        results.append(command_output([binary, "stop", name], timeout=30))
+    if action == "restart":
+        results.append(command_output([binary, "rm", name], timeout=30))
+    if action == "start":
+        results.append(command_output([binary, "rm", "-f", name], timeout=30))
+    if action in {"start", "restart"}:
+        results.append(command_output(container_run_command(binary, app), timeout=60))
+    return {
+        "ok": all(item["ok"] for item in results),
+        "app": enrich_app(app),
+        "action": action,
+        "container": name,
+        "runtime": runtime,
+        "results": results,
+    }
+
+
+def app_action(app_id, action):
+    if action not in {"start", "stop", "restart"}:
+        raise ValueError(f"Unsupported app action '{action}'")
+    app = app_by_id(app_id)
+    if app.get("runtime") == "container":
+        return container_app_action(app, action)
+    results = []
+    for service in app.get("services", []):
+        unit = app_service_unit(service)
+        result = command_output(["systemctl", action, unit], timeout=20)
+        results.append({"service": service, "unit": unit, "ok": result["ok"], "stdout": result["stdout"], "stderr": result["stderr"]})
+    return {"ok": all(item["ok"] for item in results), "app": enrich_app(app), "action": action, "results": results}
+
+
+def app_logs(app_id, lines=120):
+    app = app_by_id(app_id)
+    lines = max(1, min(int(lines), 500))
+    logs = []
+    if app.get("runtime") == "container":
+        runtime = container_runtime_status()
+        if not runtime["available"]:
+            raise ValueError(runtime["error"])
+        name = app_container_name(app["id"])
+        result = command_output([runtime["runtime"], "logs", "--tail", str(lines), name], timeout=15)
+        logs.append({"container": name, "runtime": runtime["runtime"], "ok": result["ok"], "logs": result["stdout"], "error": result["stderr"]})
+    for service in app.get("services", []):
+        unit = app_service_unit(service)
+        result = command_output(["journalctl", "-u", unit, "-n", str(lines), "--no-pager"], timeout=10)
+        logs.append({"service": service, "unit": unit, "ok": result["ok"], "logs": result["stdout"], "error": result["stderr"]})
+    return {"ok": all(item["ok"] for item in logs), "app_id": app_id, "logs": logs}
 
 
 def glob_paths(patterns):
@@ -1508,6 +2671,121 @@ def data_status():
     }
 
 
+def ota_artifacts():
+    artifacts = []
+    if OTA_ARTIFACT_DIR.exists():
+        for path in sorted(OTA_ARTIFACT_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if path.is_file() and path.suffix.lower() in {".mender", ".yarios"}:
+                stat = path.stat()
+                artifacts.append({"path": str(path), "name": path.name, "bytes": stat.st_size, "modified": int(stat.st_mtime)})
+    return artifacts
+
+
+def mender_version():
+    if not has_command("mender"):
+        return {"available": False, "version": "", "error": "mender client is not installed"}
+    result = command_output(["mender", "--version"], timeout=8)
+    return {"available": True, "version": result.get("stdout", ""), "error": result.get("stderr", "")}
+
+
+def default_ota_config():
+    return {
+        "release_channel": "stable",
+        "auto_check": True,
+        "auto_download": False,
+        "auto_install": False,
+        "atlas_assignment_url": "",
+        "require_signed_artifacts": True,
+    }
+
+
+def read_ota_config():
+    config = {**default_ota_config(), **read_json_file(OTA_CONFIG_FILE, {})}
+    if config.get("release_channel") not in {"dev", "beta", "stable"}:
+        config["release_channel"] = "stable"
+    return config
+
+
+def save_ota_config(payload):
+    channel = str(payload.get("release_channel") or payload.get("channel") or "stable").strip().lower()
+    if channel not in {"dev", "beta", "stable"}:
+        raise ValueError("release_channel must be one of dev, beta, stable")
+    auto_install = bool(payload.get("auto_install") in {True, "true", "on", "1", 1})
+    auto_download = bool(payload.get("auto_download") in {True, "true", "on", "1", 1}) or auto_install
+    config = {
+        "release_channel": channel,
+        "auto_check": bool(payload.get("auto_check") in {True, "true", "on", "1", 1}),
+        "auto_download": auto_download,
+        "auto_install": auto_install,
+        "atlas_assignment_url": str(payload.get("atlas_assignment_url") or "").strip(),
+        "require_signed_artifacts": bool(payload.get("require_signed_artifacts", True) in {True, "true", "on", "1", 1}),
+        "updated": int(time.time()),
+    }
+    if config["auto_install"] and not config["require_signed_artifacts"]:
+        raise ValueError("auto_install requires signed artifacts")
+    OTA_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    OTA_CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(OTA_CONFIG_FILE, 0o600)
+    return {"ok": True, "config": config}
+
+
+def ota_status():
+    state = read_json_file(OTA_STATE_FILE, {"state": "idle"})
+    return {
+        "supported": True,
+        "engine": "mender",
+        "mender": mender_version(),
+        "artifact_dir": str(OTA_ARTIFACT_DIR),
+        "artifacts": ota_artifacts(),
+        "state": state,
+        "config": read_ota_config(),
+        "manual_install_endpoint": "/api/ota/install",
+        "config_endpoint": "/api/ota/config",
+        "atlas_managed": {"planned": True, "message": "Atlas will assign signed artifacts and orchestrate staged rollout later."},
+    }
+
+
+def resolve_ota_artifact(path_value):
+    if not path_value:
+        raise ValueError("artifact path is required")
+    artifact_dir = OTA_ARTIFACT_DIR.resolve()
+    path = Path(str(path_value)).expanduser()
+    if not path.is_absolute():
+        path = artifact_dir / path
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(artifact_dir)
+    except ValueError as exc:
+        raise ValueError(f"artifact must be under {artifact_dir}") from exc
+    if not resolved.exists() or not resolved.is_file():
+        raise ValueError(f"artifact not found: {resolved}")
+    if resolved.suffix.lower() not in {".mender", ".yarios"}:
+        raise ValueError("artifact must end with .mender or .yarios")
+    return resolved
+
+
+def write_ota_state(payload):
+    OTA_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {**payload, "updated": int(time.time())}
+    OTA_STATE_FILE.write_text(json.dumps(payload, indent=2) + "\n")
+    os.chmod(OTA_STATE_FILE, 0o600)
+    return payload
+
+
+def install_ota_artifact(payload):
+    if not payload.get("confirm"):
+        raise ValueError("OTA install requires confirm=true")
+    mender = mender_version()
+    if not mender["available"]:
+        raise ValueError(mender["error"])
+    artifact = resolve_ota_artifact(payload.get("path"))
+    state = write_ota_state({"state": "installing", "artifact": str(artifact), "engine": "mender"})
+    result = command_output(["mender", "install", str(artifact)], timeout=600)
+    final_state = "installed-reboot-required" if result["ok"] else "failed"
+    state = write_ota_state({"state": final_state, "artifact": str(artifact), "engine": "mender", "stdout": result["stdout"], "stderr": result["stderr"], "returncode": result["returncode"]})
+    return {"ok": result["ok"], "state": state, "mender": mender}
+
+
 def dns_status():
     resolv = read_text_file("/etc/resolv.conf")
     servers = []
@@ -1524,6 +2802,7 @@ def network_config_placeholders():
         "client_wifi": {"profile": "yari-wifi", "configured_ssid": read_configured_ssid()},
         "ethernet": {"managed_by": "NetworkManager", "dhcp": True},
         "static_ip": {"supported": True, **read_static_ip_config()},
+        "policy": read_network_policy(),
         "dns": {"servers": dns_status()},
         "lte": {"supported": False, "message": "LTE modem support placeholder."},
     }
@@ -1539,7 +2818,19 @@ def log_sources():
 
 
 def logs_status():
-    return {"sources": log_sources(), "support_bundle_endpoint": "/api/logs/support-bundle"}
+    return {
+        "sources": log_sources(),
+        "support_bundle_endpoint": "/api/logs/support-bundle",
+        "support_bundle": {
+            "format": "tar.gz",
+            "includes": [
+                "device, network, service, ROS, video, data, app, and OTA status snapshots",
+                "sanitized YARI config files and app manifests",
+                "onboarding, system, ROS, MAVLink, and YARI service logs",
+            ],
+            "redaction": "passwords, tokens, secrets, authorization headers, and SSH keys are redacted",
+        },
+    }
 
 
 def read_log_source(source, lines=160):
@@ -1562,6 +2853,45 @@ def read_log_source(source, lines=160):
     raise ValueError(f"Unsupported log source '{source}'")
 
 
+def sanitize_support_payload(value):
+    secret_keys = {"password", "psk", "token", "secret", "authorization", "authorized_keys", "ssh_password", "atlas_token", "foxglove_token"}
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if any(secret in lowered for secret in secret_keys):
+                result[key] = redact_secret(item) if item else {"configured": False}
+            else:
+                result[key] = sanitize_support_payload(item)
+        return result
+    if isinstance(value, list):
+        return [sanitize_support_payload(item) for item in value]
+    return value
+
+
+def support_config_snapshots():
+    snapshots = {
+        "device-portal-config.json": sanitize_support_payload(read_json_file(PORTAL_CONFIG_FILE, {})),
+        "network-policy.json": read_network_policy(),
+        "static-network.json": read_static_ip_config(),
+        "ota-config.json": read_ota_config(),
+        "ota-state.json": read_json_file(OTA_STATE_FILE, {"state": "idle"}),
+        "upload-queue.json": sanitize_support_payload(read_upload_queue()),
+        "flight-log-downloads.json": read_flight_log_downloads(),
+    }
+    return snapshots
+
+
+def support_app_manifest_snapshots():
+    manifests = {}
+    for app in raw_app_manifests()[0]:
+        source = app.get("source") or "builtin"
+        name = f"{app['id']}.json"
+        manifests[name] = sanitize_support_payload(app)
+        manifests[name]["source"] = source
+    return manifests
+
+
 def support_bundle():
     SUPPORT_BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
     bundle = SUPPORT_BUNDLE_DIR / f"yari-support-{device_id()}-{int(time.time())}.tar.gz"
@@ -1570,17 +2900,33 @@ def support_bundle():
         "network-status.json": network_status(),
         "network-diagnostics.json": network_diagnostics(),
         "services.json": services_status(),
+        "apps.json": app_catalog(),
+        "app-packages.json": app_packages(),
+        "ota-status.json": ota_status(),
         "autopilot-status.json": autopilot_status(),
         "ros-status.json": ros_status(),
         "video-status.json": video_status(),
         "data-status.json": data_status(),
         "logs-status.json": logs_status(),
+        "portal-version.json": portal_version(),
     }
     with tarfile.open(bundle, "w:gz") as tar:
         for name, payload in payloads.items():
             tmp = SUPPORT_BUNDLE_DIR / name
-            tmp.write_text(json.dumps(payload, indent=2) + "\n")
+            tmp.write_text(json.dumps(sanitize_support_payload(payload), indent=2) + "\n")
             tar.add(tmp, arcname=name)
+            tmp.unlink(missing_ok=True)
+        if PORTAL_ASSETS_FILE.exists():
+            tar.add(PORTAL_ASSETS_FILE, arcname="portal-assets.json")
+        for name, payload in support_config_snapshots().items():
+            tmp = SUPPORT_BUNDLE_DIR / name
+            tmp.write_text(json.dumps(payload, indent=2) + "\n")
+            tar.add(tmp, arcname=f"config/{name}")
+            tmp.unlink(missing_ok=True)
+        for name, payload in support_app_manifest_snapshots().items():
+            tmp = SUPPORT_BUNDLE_DIR / name
+            tmp.write_text(json.dumps(payload, indent=2) + "\n")
+            tar.add(tmp, arcname=f"apps/{name}")
             tmp.unlink(missing_ok=True)
         for source in ("onboarding", "system", "ros", "mavlink"):
             tmp = SUPPORT_BUNDLE_DIR / f"{source}.log"
@@ -1623,6 +2969,7 @@ class Handler(SimpleHTTPRequestHandler):
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(code)
         self.send_header("content-type", "application/json")
+        self.send_header("cache-control", "no-store")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1631,6 +2978,38 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("content-type", content_type)
         self.send_header("cache-control", "no-store")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def serve_static(self, request_path):
+        relative = unquote(request_path.lstrip("/")) or "index.html"
+        if relative.endswith("/"):
+            relative = f"{relative}index.html"
+        if ".." in Path(relative).parts:
+            self.send_error(404)
+            return
+        target = WEB_DIR / relative
+        if not target.exists() or target.is_dir():
+            target = WEB_DIR / "index.html"
+        if not target.exists():
+            self.send_error(404)
+            return
+        content_path = target
+        use_gzip = "gzip" in self.headers.get("accept-encoding", "") and target.with_suffix(target.suffix + ".gz").exists()
+        if use_gzip:
+            content_path = target.with_suffix(target.suffix + ".gz")
+        body = content_path.read_bytes()
+        content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("content-type", content_type)
+        self.send_header("vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("content-encoding", "gzip")
+        if target.name == "index.html":
+            self.send_header("cache-control", "no-cache")
+        else:
+            self.send_header("cache-control", "public, max-age=31536000, immutable")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -1646,6 +3025,9 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/network/status":
                 self.send_json(200, network_status())
                 return
+            if path == "/api/portal/version":
+                self.send_json(200, portal_version())
+                return
             if path == "/api/network/diagnostics":
                 self.send_json(200, network_diagnostics())
                 return
@@ -1657,6 +3039,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/services":
                 self.send_json(200, services_status())
+                return
+            if path == "/api/apps":
+                self.send_json(200, app_catalog())
+                return
+            if path == "/api/apps/registry":
+                self.send_json(200, app_registry())
+                return
+            if path == "/api/apps/packages":
+                self.send_json(200, app_packages())
                 return
             if path == "/api/logs":
                 self.send_json(200, logs_status())
@@ -1681,6 +3072,11 @@ class Handler(SimpleHTTPRequestHandler):
                 lines = query.get("lines", ["120"])[0]
                 self.send_json(200, service_logs(service_logs_match.group(1), lines))
                 return
+            app_logs_match = re.match(r"^/api/apps/([^/]+)/logs$", path)
+            if app_logs_match:
+                lines = query.get("lines", ["120"])[0]
+                self.send_json(200, app_logs(app_logs_match.group(1), lines))
+                return
             if path == "/api/autopilot/status":
                 self.send_json(200, autopilot_status())
                 return
@@ -1702,13 +3098,22 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/data/status":
                 self.send_json(200, data_status())
                 return
+            if path == "/api/ota/status":
+                self.send_json(200, ota_status())
+                return
         except Exception as exc:
             self.send_json(500, {"ok": False, "error": str(exc)})
             return
-        super().do_GET()
+        if path.startswith("/api/"):
+            self.send_json(404, {"ok": False, "error": "not found"})
+            return
+        self.serve_static(path)
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if not request_authorized(self.headers):
+            self.send_json(401, {"ok": False, "error": "YARI portal API token required"})
+            return
         length = int(self.headers.get("content-length", "0") or 0)
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -1740,12 +3145,18 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/device/regenerate-id":
                 self.send_json(200, {"ok": True, "state": regenerate_device_id()})
                 return
+            if path == "/api/device/profile":
+                self.send_json(200, save_device_profile(payload))
+                return
             if path == "/api/network/ap/enable":
                 ensure_ap()
                 self.send_json(200, {"ok": True, "state": read_state()})
                 return
             if path == "/api/network/static-ip":
                 self.send_json(200, save_static_ip_config(payload))
+                return
+            if path == "/api/network/policy":
+                self.send_json(200, save_network_policy(payload))
                 return
             if path == "/api/network/wifi/reconnect":
                 self.send_json(200, reconnect_wifi())
@@ -1756,9 +3167,41 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/network/factory-reset":
                 self.send_json(200, {"ok": True, "state": factory_reset(bool(payload.get("reboot", False)))})
                 return
+            if path == "/api/ota/config":
+                self.send_json(200, save_ota_config(payload))
+                return
+            if path == "/api/ota/install":
+                self.send_json(200, install_ota_artifact(payload))
+                return
             service_match = re.match(r"^/api/services/([^/]+)/(start|stop|restart|enable|disable)$", path)
             if service_match:
                 self.send_json(200, service_action(service_match.group(1), service_match.group(2)))
+                return
+            if path == "/api/apps/install":
+                self.send_json(200, install_app_manifest(payload))
+                return
+            if path == "/api/apps/packages/upload":
+                self.send_json(200, upload_app_package(payload))
+                return
+            app_registry_install_match = re.match(r"^/api/apps/registry/([^/]+)/install$", path)
+            if app_registry_install_match:
+                self.send_json(200, install_registry_app(app_registry_install_match.group(1), bool(payload.get("replace", False))))
+                return
+            app_package_install_match = re.match(r"^/api/apps/packages/([^/]+)/install$", path)
+            if app_package_install_match:
+                self.send_json(200, install_app_package(unquote(app_package_install_match.group(1)), bool(payload.get("replace", False))))
+                return
+            app_package_delete_match = re.match(r"^/api/apps/packages/([^/]+)/delete$", path)
+            if app_package_delete_match:
+                self.send_json(200, delete_app_package(unquote(app_package_delete_match.group(1))))
+                return
+            app_uninstall_match = re.match(r"^/api/apps/([^/]+)/uninstall$", path)
+            if app_uninstall_match:
+                self.send_json(200, uninstall_app_manifest(app_uninstall_match.group(1)))
+                return
+            app_match = re.match(r"^/api/apps/([^/]+)/(start|stop|restart)$", path)
+            if app_match:
+                self.send_json(200, app_action(app_match.group(1), app_match.group(2)))
                 return
             if path == "/api/mavlink/endpoints":
                 self.send_json(200, {"ok": True, "config": write_mavlink_endpoints(payload)})
@@ -1813,12 +3256,21 @@ def serve_http(label="YARI onboarding"):
 
 def serve():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    if wait_for_connectivity(CONNECTIVITY_TIMEOUT):
+    policy = read_network_policy()
+    if policy.get("maintenance_ap_enabled"):
+        ensure_ap()
+        serve_http(f"YARI maintenance setup AP {ap_ssid()}")
+        return
+    if wait_for_connectivity(policy.get("fallback_timeout_sec", CONNECTIVITY_TIMEOUT)):
         write_state(current_state({"mode": "client", "message": "network already connected"}))
         serve_http("YARI device portal")
         return
-    ensure_ap()
-    serve_http(f"YARI onboarding setup AP {ap_ssid()}")
+    if policy.get("fallback_ap_enabled", True):
+        ensure_ap()
+        serve_http(f"YARI onboarding setup AP {ap_ssid()}")
+        return
+    write_state(current_state({"mode": "client-failed-no-ap", "message": "network unavailable and fallback AP disabled"}))
+    serve_http("YARI device portal")
 
 
 def main():
@@ -1837,3 +3289,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+

@@ -97,6 +97,7 @@ source "${CONFIG_FILE}"
 : "${YARI_ONBOARDING_ENABLED:=1}"
 : "${YARI_ONBOARDING_AP_PASSWORD:=}"
 : "${YARI_ONBOARDING_CONNECTIVITY_TIMEOUT:=45}"
+: "${YARI_PORTAL_BUILD:=auto}"
 
 info() {
   echo "==> $*"
@@ -119,6 +120,49 @@ need mount
 need umount
 need openssl
 need lsblk
+
+run_as_invoking_user() {
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && command -v runuser >/dev/null 2>&1; then
+    local build_home
+    build_home="$(getent passwd "${SUDO_USER}" | cut -d: -f6)"
+    runuser -u "${SUDO_USER}" -- env HOME="${build_home}" "$@"
+  else
+    "$@"
+  fi
+}
+
+build_yari_portal() {
+  local portal_dir="${REPO_ROOT}/provisioning/yari-onboarding/portal"
+  local mode="${YARI_PORTAL_BUILD}"
+  [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "true" || "${YARI_ONBOARDING_ENABLED}" == "True" ]] || return
+  [[ "${mode}" != "never" ]] || return
+  [[ -f "${portal_dir}/package.json" ]] || return
+
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    if [[ "${mode}" == "always" ]]; then
+      die "YARI_PORTAL_BUILD=always requires Node.js >= 18 and npm on the host."
+    fi
+    info "Node.js/npm not found; using legacy static YARI portal fallback"
+    return
+  fi
+
+  local node_major
+  node_major="$(node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || echo 0)"
+  if (( node_major < 18 )); then
+    if [[ "${mode}" == "always" ]]; then
+      die "YARI_PORTAL_BUILD=always requires Node.js >= 18; found $(node --version 2>/dev/null || echo unknown)."
+    fi
+    info "Node.js >= 18 not found; using legacy static YARI portal fallback"
+    return
+  fi
+
+  info "Building Svelte YARI OS portal"
+  (
+    cd "${portal_dir}"
+    run_as_invoking_user npm ci
+    run_as_invoking_user npm run build
+  )
+}
 
 IMAGE_NAME="$(basename "${IMAGE_URL}")"
 XZ_PATH="${CACHE_DIR}/${IMAGE_NAME}"
@@ -331,6 +375,8 @@ ssh_key="$(read_public_key | tr -d '\r' | head -n 1)"
 
 mkdir -p "${CACHE_DIR}" "${OUTPUT_DIR}"
 
+build_yari_portal
+
 if [[ "${SKIP_DOWNLOAD}" -ne 1 ]]; then
   if [[ "${FORCE_DOWNLOAD}" -eq 1 ]]; then
     rm -f "${XZ_PATH}" "${BASE_IMG_PATH}"
@@ -489,11 +535,17 @@ NETPLAN
 fi
 
 if [[ "${YARI_ONBOARDING_ENABLED}" == "1" || "${YARI_ONBOARDING_ENABLED}" == "true" || "${YARI_ONBOARDING_ENABLED}" == "True" ]]; then
-  install -d "${ROOT_MOUNT}/usr/local/sbin" "${ROOT_MOUNT}/opt/yari/onboarding/web" "${ROOT_MOUNT}/etc/systemd/system" "${ROOT_MOUNT}/etc/yari" "${ROOT_MOUNT}/var/lib/yari/onboarding"
+  install -d "${ROOT_MOUNT}/usr/local/sbin" "${ROOT_MOUNT}/opt/yari/onboarding/web" "${ROOT_MOUNT}/opt/yari/onboarding/apps" "${ROOT_MOUNT}/etc/systemd/system" "${ROOT_MOUNT}/etc/yari/apps.d" "${ROOT_MOUNT}/var/lib/yari/onboarding"
   install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-onboarding" "${ROOT_MOUNT}/usr/local/sbin/yari-onboarding"
   install -m 0755 "${REPO_ROOT}/provisioning/yari-onboarding/scripts/yari-service-manager" "${ROOT_MOUNT}/usr/local/sbin/yari-service-manager"
   install -m 0644 "${REPO_ROOT}/provisioning/yari-onboarding/systemd/"*.service "${ROOT_MOUNT}/etc/systemd/system/"
-  cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  cp -a "${REPO_ROOT}/provisioning/yari-onboarding/apps/." "${ROOT_MOUNT}/opt/yari/onboarding/apps/"
+  find "${ROOT_MOUNT}/opt/yari/onboarding/apps" -name '*:Zone.Identifier' -delete || true
+  if [[ -f "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/index.html" ]]; then
+    cp -a "${REPO_ROOT}/provisioning/yari-onboarding/portal/dist/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  else
+    cp -a "${REPO_ROOT}/provisioning/yari-onboarding/web/." "${ROOT_MOUNT}/opt/yari/onboarding/web/"
+  fi
   find "${ROOT_MOUNT}/opt/yari/onboarding/web" -name '*:Zone.Identifier' -delete || true
   cat > "${ROOT_MOUNT}/etc/yari/onboarding.env" <<ONBOARDING_ENV
 YARI_ONBOARDING_WIFI_IFACE=wlan0
@@ -628,3 +680,5 @@ if [[ -n "${DEVICE}" ]]; then
   sync
   info "Flash complete. Eject ${DEVICE}, boot the Pi, then SSH to ${USERNAME}@${HOSTNAME}.local or the router IP."
 fi
+
+

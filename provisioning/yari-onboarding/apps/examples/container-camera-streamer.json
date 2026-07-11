@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "id": "camera-streamer",
+  "name": "Camera Streamer",
+  "version": "0.1.0",
+  "runtime": "container",
+  "description": "Example container app manifest for a camera streaming workload.",
+  "ports": [
+    { "container": 8554, "host": 8554, "protocol": "tcp", "description": "RTSP stream" }
+  ],
+  "permissions": ["camera.read", "network.listen", "network.host", "ros.read", "storage.persistent"],
+  "devices": ["/dev/video0"],
+  "volumes": ["/var/lib/yari/apps/camera-streamer:/data"],
+  "container": {
+    "image": "registry.yari.io/yari/camera-streamer:0.1.0",
+    "network": "host",
+    "privileged": false,
+    "capabilities": [],
+    "environment": {
+      "YARI_CAMERA_DEVICE": "/dev/video0",
+      "YARI_RTSP_URL": "rtsp://127.0.0.1:8554/yari-video"
+    }
+  },
+  "healthcheck": { "type": "tcp", "port": 8554 },
+  "ui": { "path": "#video" }
+}

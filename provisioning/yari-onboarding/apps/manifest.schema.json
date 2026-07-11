@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yari.io/schemas/yari-app-manifest-v1.json",
+  "title": "YARI OS App Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "name",
+    "version",
+    "runtime"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]{1,63}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "runtime": {
+      "enum": [
+        "core-service",
+        "service-bundle",
+        "container"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "description": "Compatibility alias for runtime; new manifests should use runtime."
+    },
+    "description": {
+      "type": "string"
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^([A-Za-z0-9_.@-]+\\.service|[a-z0-9][a-z0-9_.-]{1,63})$"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "ports": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "container"
+            ],
+            "properties": {
+              "container": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "host": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "protocol": {
+                "enum": [
+                  "tcp",
+                  "udp"
+                ]
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      },
+      "default": []
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Declared app capabilities. Container runtime options are gated by these permissions; examples include camera.read, serial.read-write, can.read-write, gpu.access, network.listen, network.host, storage.persistent, system.capabilities, and system.privileged."
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^/dev/[^\\n\\r]+$"
+      },
+      "default": [],
+      "description": "Container device mappings. Each device path must be covered by a matching permission such as camera.read, serial.read-write, can.read-write, or gpu.access."
+    },
+    "volumes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^/[^\\n\\r:]+:/[^\\n\\r:]+(:[A-Za-z,]+)?$"
+      },
+      "default": [],
+      "description": "Volume mappings. Container apps may only mount app-scoped YARI data directories and require storage.persistent."
+    },
+    "healthcheck": {
+      "type": "object"
+    },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "network": {
+          "enum": [
+            "bridge",
+            "host",
+            "none"
+          ],
+          "description": "Use host only when the manifest declares network.host."
+        },
+        "privileged": {
+          "type": "boolean",
+          "description": "Requires system.privileged and should be avoided outside trusted first-party apps."
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Linux capabilities. Requires system.capabilities and is restricted by the YARI OS runtime allowlist."
+        },
+        "environment": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "update": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional future registry/OTA metadata. Local registry update detection is currently based on normalized manifest digests and version fields.",
+      "properties": {
+        "channel": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "artifact": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
