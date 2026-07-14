@@ -66,6 +66,7 @@
   let videoForm = { stream_enabled: false, device: '', rtsp_url: 'rtsp://127.0.0.1:8554/yari-video', size: '640x480', fps: 15, encoding: 'mjpeg', bandwidth_kbps: '', foxglove_topic: '/camera/image_raw/compressed', atlas_webrtc_enabled: false, atlas_camera_topic: '/camera/camera_node/image_raw/compressed', atlas_max_video_fps: 15 };
   let flightLogForm = { log_id: '', endpoint_name: '' };
   let networkPolicyForm = { fallback_ap_enabled: true, fallback_timeout_sec: 45, maintenance_ap_enabled: false, serve_portal_on_client_network: true };
+  let staticIpForm = { enabled: false, connection_name: 'yari-wifi', address_cidr: '', gateway: '', dns: '' };
   let otaForm = { path: '', confirm: false };
   let otaConfigForm = { release_channel: 'stable', auto_check: true, auto_download: false, auto_install: false, require_signed_artifacts: true, atlas_assignment_url: '' };
   let configImportFile: File | null = null;
@@ -953,11 +954,19 @@
     network = await api<NetworkStatus>('/api/network/status');
     diagnostics = await api<NetworkDiagnostics>('/api/network/diagnostics');
     const policy = network.config?.policy || {};
+    const staticIp = network.config?.static_ip || {};
     networkPolicyForm = {
       fallback_ap_enabled: Boolean(policy.fallback_ap_enabled ?? true),
       fallback_timeout_sec: Number(policy.fallback_timeout_sec ?? 45),
       maintenance_ap_enabled: Boolean(policy.maintenance_ap_enabled),
       serve_portal_on_client_network: Boolean(policy.serve_portal_on_client_network ?? true),
+    };
+    staticIpForm = {
+      enabled: Boolean(staticIp.enabled),
+      connection_name: staticIp.connection_name || 'yari-wifi',
+      address_cidr: staticIp.address_cidr || '',
+      gateway: staticIp.gateway || '',
+      dns: Array.isArray(staticIp.dns) ? staticIp.dns.join(', ') : staticIp.dns || '',
     };
   }
 
@@ -1098,6 +1107,13 @@
   async function saveNetworkPolicy() {
     setAction(await post('/api/network/policy', networkPolicyForm));
     await refreshNetwork();
+  }
+
+  async function saveStaticIp() {
+    await withBusy('save-static-ip', async () => {
+      setAction(await post('/api/network/static-ip', staticIpForm));
+      await refreshNetwork();
+    });
   }
 
   async function serviceAction(name: string, action: string) {
@@ -1750,6 +1766,24 @@
           <label><input bind:checked={networkPolicyForm.serve_portal_on_client_network} type="checkbox" /> Serve portal on client network</label>
           <button type="submit">Save recovery policy</button>
         </form>
+      </div>
+
+      <div class="card wide">
+        <h2>Static IPv4</h2>
+        <form on:submit|preventDefault={saveStaticIp}>
+          <label><input bind:checked={staticIpForm.enabled} type="checkbox" /> Use static IPv4 for Wi-Fi client mode</label>
+          <label>Connection profile<input bind:value={staticIpForm.connection_name} placeholder="yari-wifi" /></label>
+          <label>Address / CIDR<input bind:value={staticIpForm.address_cidr} placeholder="192.168.0.50/24" /></label>
+          <label>Gateway<input bind:value={staticIpForm.gateway} placeholder="192.168.0.1" /></label>
+          <label>DNS servers<input bind:value={staticIpForm.dns} placeholder="1.1.1.1, 8.8.8.8" /></label>
+          <button class:busy={isBusy('save-static-ip')} type="submit" disabled={Boolean(busyAction)}>{buttonText('save-static-ip', 'Save static IP', 'Saving...')}</button>
+        </form>
+        <dl class="meta-list">
+          <div><dt>Mode</dt><dd>{network?.config?.static_ip?.enabled ? 'static' : 'DHCP'}</dd></div>
+          <div><dt>Configured address</dt><dd>{network?.config?.static_ip?.address_cidr || 'none'}</dd></div>
+          <div><dt>DNS</dt><dd>{listText(network?.config?.static_ip?.dns, 'none')}</dd></div>
+          <div><dt>Config file</dt><dd>{network?.config?.static_ip?.config_file || 'unknown'}</dd></div>
+        </dl>
       </div>
 
       <div class="card wide">

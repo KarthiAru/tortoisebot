@@ -181,6 +181,16 @@ class TortoiseBotProvisioningContractTests(unittest.TestCase):
         self.assertIn('if source == "atlas-bridge":', text)
         self.assertIn("tail_file_log(source, ATLAS_BRIDGE_LOG_FILE, lines)", text)
 
+    def test_portal_exposes_static_ip_controls(self):
+        server_text = ONBOARDING_SERVER.read_text(encoding="utf-8")
+        portal_text = (REPO_ROOT / "yari-onboarding" / "portal" / "src" / "App.svelte").read_text(encoding="utf-8")
+        self.assertIn('if path == "/api/network/static-ip":', server_text)
+        self.assertIn("save_static_ip_config(payload)", server_text)
+        self.assertIn("Static IPv4", portal_text)
+        self.assertIn("staticIpForm", portal_text)
+        self.assertIn("/api/network/static-ip", portal_text)
+        self.assertIn("Address / CIDR", portal_text)
+
     def test_tortoisebot_portal_endpoints_are_wired_to_http_handler(self):
         text = ONBOARDING_SERVER.read_text(encoding="utf-8")
         self.assertIn('if path == "/api/tortoisebot/status":', text)
